@@ -1,0 +1,10 @@
+{
+  "name": "LEDPWM",
+  "version": "0.1.0",
+  "description": "PWM-based RGBW LED channel driver",
+  "dependencies": {
+    "RGBWCommon": "*"
+  },
+  "frameworks": ["arduino"],
+  "platforms": ["espressif32", "atmelavr", "atmelsam"]
+}

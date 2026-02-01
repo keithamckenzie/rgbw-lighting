@@ -1,0 +1,10 @@
+{
+  "name": "LEDStrip",
+  "version": "0.1.0",
+  "description": "Addressable RGBW LED strip driver (SK6812)",
+  "dependencies": {
+    "RGBWCommon": "*"
+  },
+  "frameworks": ["arduino"],
+  "platforms": ["espressif32", "atmelavr", "atmelsam"]
+}
