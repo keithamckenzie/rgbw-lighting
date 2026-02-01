@@ -1,4 +1,4 @@
-# chad
+# rgbw-lighting
 
 RGBW lighting apps for ESP32 and Arduino using PlatformIO.
 
