@@ -46,3 +46,15 @@ RGBW scaleBrightness(const RGBW& color, uint8_t brightness) {
         (color.w * brightness) >> 8
     );
 }
+
+RGBW rgbwToRgb(const RGBW& color) {
+    uint16_t r = color.r + color.w;
+    uint16_t g = color.g + color.w;
+    uint16_t b = color.b + color.w;
+    return RGBW(
+        (uint8_t)(r > 255 ? 255 : r),
+        (uint8_t)(g > 255 ? 255 : g),
+        (uint8_t)(b > 255 ? 255 : b),
+        0
+    );
+}

@@ -12,6 +12,9 @@
 *.sublime-project
 *.sublime-workspace
 
+# Python
+.venv/
+
 # Build
 build/
 cmake-build-*/

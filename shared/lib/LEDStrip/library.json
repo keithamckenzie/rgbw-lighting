@@ -1,7 +1,7 @@
 {
   "name": "LEDStrip",
   "version": "0.1.0",
-  "description": "Addressable RGBW LED strip driver (SK6812)",
+  "description": "Addressable LED strip driver (SK6812 RGBW, WS2815B RGB)",
   "dependencies": {
     "RGBWCommon": "*"
   },

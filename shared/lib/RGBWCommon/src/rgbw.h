@@ -26,3 +26,6 @@ RGBW lerpRGBW(const RGBW& a, const RGBW& b, float t);
 
 // Scale brightness (0-255)
 RGBW scaleBrightness(const RGBW& color, uint8_t brightness);
+
+// Convert RGBW to RGB by folding white channel back into R, G, B (clamped to 255)
+RGBW rgbwToRgb(const RGBW& color);
