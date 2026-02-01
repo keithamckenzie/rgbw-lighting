@@ -68,7 +68,7 @@ build_unflags = -std=gnu++11
 platform = atmelavr
 board = uno
 lib_deps =
-    adafruit/Adafruit NeoPixel@^1.12.0
+    makuna/NeoPixelBus@^2.8.0
 
 [env:native]
 platform = native
@@ -260,10 +260,10 @@ The `native` environment uses `lib_ignore` to skip hardware-dependent libraries.
 ```cpp
 #ifdef NATIVE_BUILD
 // Mock types for host compilation
-struct MockNeoPixel {
-    void setPixelColor(uint16_t, uint32_t) {}
-    void show() {}
-    void setBrightness(uint8_t) {}
+struct MockNeoPixelBus {
+    void SetPixelColor(uint16_t, uint32_t) {}
+    void Show() {}
+    void SetLuminance(uint8_t) {}
 };
 #endif
 ```

@@ -26,3 +26,6 @@ Thumbs.db
 # Secrets
 secrets.h
 credentials.h
+
+# Internal docs
+conversations/

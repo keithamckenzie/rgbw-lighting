@@ -4,12 +4,30 @@ I2S microphones, RCA audio input, ADC configuration, FFT processing with ESP-DSP
 
 ## Audio Input Sources
 
-### I2S Microphones (INMP441, SPH0645)
+### I2S Microphones (INMP441, SPH0645, ICS-43432)
 
 - Connect via I2S interface (not I2C despite the confusing naming).
 - ESP32 I2S pins are configurable. Use `i2s_driver_install()` + `i2s_set_pin()`.
 - Sample at 44100 Hz for full audio spectrum or 22050 Hz for bass/mid only.
 - I2S provides 24-bit samples in DMA buffers without CPU blocking.
+
+| Microphone | Interface | Bits | SNR | Notes |
+|-----------|-----------|------|-----|-------|
+| INMP441 | I2S | 24-bit | 61 dB | Common, inexpensive, good for bass detection |
+| SPH0645 | I2S | 24-bit | 65 dB | Adafruit breakout available, slightly better SNR |
+| ICS-43432 | I2S | 24-bit | 65 dBA | Current-production TDK part. Flat frequency response, good all-around choice. Pin-compatible with the discontinued ICS-43434 |
+| ICS-43434 | I2S | 24-bit | 64 dBA | **EOL** — TDK has discontinued this part. Existing boards work but may become harder to source. Replace with ICS-43432 for new builds |
+
+All listed I2S mics use the same wiring and driver setup (BCLK, LRCLK/WS, DATA). The ICS-43432/43434 have a flatter frequency response across the audible range compared to the INMP441, which rolls off at higher frequencies. For beat detection (bass-heavy), any of them work well. For full-spectrum visualization, the SPH0645 or ICS-43432 are preferred.
+
+### Microphone Placement and Vibration Isolation
+
+MEMS microphones are sensitive to mechanical vibration as well as airborne sound. Without isolation, bass from nearby speakers or subwoofers transmits through the mounting surface and registers as low-frequency energy, corrupting beat detection.
+
+- **Mount the mic on foam or rubber.** A small piece of open-cell foam or a rubber grommet between the breakout board and the enclosure decouples mechanical vibration. Even adhesive-backed foam tape helps.
+- **Do not mount the mic inside or on a speaker enclosure.** Cabinet vibrations will dominate the signal. Place the mic at least 30 cm from any speaker, ideally on a separate surface.
+- **Orient the sound port toward the room,** not against a wall or into the enclosure. Most MEMS breakout boards have a port hole on the top or bottom — check the specific board's datasheet.
+- **Keep the mic away from airflow** (fans, HVAC vents). Moving air across the port creates broadband noise.
 
 ### I2C Microphones
 
@@ -41,6 +59,51 @@ RCA Signal ──┤├── 10uF DC block ──┬── GPIO 32 (ADC1_CH4)
 Bias point: 3.3V / 2 = 1.65V
 Input range: ~0.75V to ~2.55V (for 0.9 Vpp consumer line level)
 ```
+
+### Analog Microphone with Preamp
+
+An analog electret or MEMS microphone (e.g., MAX4466 or MAX9814 breakout) can be connected to an ADC1 pin. These modules include a preamp that outputs an analog voltage already biased to mid-supply (VCC/2 for MAX4466, similar for MAX9814).
+
+- Connect the output directly to an ADC1 pin (GPIO 32-39). **Do not add the RCA bias divider** — the breakout already biases its output, and a second divider will attenuate or double-bias the signal. Add an AC coupling capacitor (10 uF) only if the module's DC offset doesn't match your ADC midpoint.
+- Gain is typically adjustable via a trim pot on the breakout board.
+- Quality is lower than I2S microphones (limited by ESP32 ADC resolution and noise floor), but adequate for basic beat detection.
+- Simpler wiring than I2S (single analog wire + power/GND).
+
+Use I2S microphones (INMP441, SPH0645, ICS-43432) for anything beyond basic beat detection.
+
+### External I2S ADC — PCM1808 (Line-Level Input)
+
+The PCM1808 is a dedicated stereo ADC that outputs I2S digital audio. It provides significantly cleaner audio capture than the ESP32's built-in ADC, which has limited effective resolution and nonlinearity.
+
+> **Do not connect speaker-level outputs** (amplifier outputs driving speakers) to the PCM1808 or any line-level ADC input. Speaker-level signals can be tens of volts and will damage the ADC. Use only line-level outputs (RCA, 3.5mm headphone jack, mixer send) as the audio source. If the only available source is speaker-level, use a dedicated speaker-to-line attenuator or DI box.
+
+| Parameter | Value |
+|-----------|-------|
+| **Resolution** | 24-bit |
+| **Sample rates** | 16-96 kHz |
+| **Dynamic range** | 99 dB (typical, per datasheet) |
+| **Interface** | I2S output (BCK, LRCK, DOUT) |
+| **Input** | Differential or single-ended line-level |
+| **Supply** | 5V analog (AVDD) + 3.3V digital (DVDD); breakout modules may include on-board regulators — check the specific module's schematic |
+
+**Wiring to ESP32:**
+
+```
+PCM1808 BCK  ──── ESP32 GPIO (I2S BCLK)
+PCM1808 LRCK ──── ESP32 GPIO (I2S LRCLK/WS)
+PCM1808 DOUT ──── ESP32 GPIO (I2S DIN)
+PCM1808 FMT  ──── GND (I2S mode)
+PCM1808 SCK  ──── Master clock (see below)
+```
+
+The PCM1808 requires a master clock (SCK) at 256x, 384x, or 512x the sample rate (set via the MD0/MD1 mode pins; see datasheet Table 1). Options:
+- Use the ESP32's `I2S_MODE_MASTER` to generate BCLK/LRCK and provide an external oscillator for SCK.
+- Some breakout boards include an on-board oscillator (common: 24.576 MHz for 48/96 kHz, or 22.5792 MHz for 44.1/88.2 kHz).
+- Check the specific module's documentation for clock and mode pin configuration.
+
+**When to use PCM1808 vs built-in ADC:**
+- **PCM1808:** When audio fidelity matters (full-spectrum analysis, precise BPM tracking, multi-band visualization). The 99 dB dynamic range vastly exceeds the ESP32's ~50 dB effective ADC performance.
+- **Built-in ADC:** Adequate for simple beat detection (bass only) where the ESP32's ADC noise floor is acceptable. Simpler wiring, no extra hardware.
 
 ### ADC Accuracy and Calibration (ESP32)
 
@@ -355,6 +418,117 @@ float dcBlocker(float input) {
     return output;
 }
 ```
+
+## BPM Tracking
+
+Once beats are detected, derive a stable BPM estimate for predictive lighting effects (auto-advancing patterns, synchronized color changes, strobe timing).
+
+### BPM Calculation from Beat Intervals
+
+```cpp
+#define MAX_INTERVALS 8
+
+uint32_t beatTimes[MAX_INTERVALS];
+uint8_t beatIdx = 0;
+uint8_t beatCount = 0;
+float smoothedBPM = 0;
+
+void onBeatDetected() {
+    uint32_t now = millis();
+    beatTimes[beatIdx] = now;
+    beatIdx = (beatIdx + 1) % MAX_INTERVALS;
+    if (beatCount < MAX_INTERVALS) beatCount++;
+
+    if (beatCount >= 2) {
+        // Average interval over recent beats
+        uint32_t totalInterval = 0;
+        uint8_t intervals = 0;
+        for (uint8_t i = 1; i < beatCount; i++) {
+            uint8_t curr = (beatIdx - 1 - i + MAX_INTERVALS) % MAX_INTERVALS;
+            uint8_t prev = (curr - 1 + MAX_INTERVALS) % MAX_INTERVALS;
+            // Skipped: full ring buffer math; simplified here
+        }
+        // Simple: use last two beats
+        uint8_t last = (beatIdx - 1 + MAX_INTERVALS) % MAX_INTERVALS;
+        uint8_t prev = (beatIdx - 2 + MAX_INTERVALS) % MAX_INTERVALS;
+        uint32_t interval = beatTimes[last] - beatTimes[prev];
+
+        if (interval > 200 && interval < 2000) {  // 30-300 BPM range
+            float instantBPM = 60000.0f / (float)interval;
+            // Exponential moving average for stability
+            const float alpha = 0.2f;
+            smoothedBPM = (smoothedBPM == 0)
+                ? instantBPM
+                : smoothedBPM + alpha * (instantBPM - smoothedBPM);
+        }
+    }
+}
+```
+
+### Beat Prediction
+
+With a stable BPM estimate, predict when the next beat will occur:
+
+```cpp
+uint32_t lastBeatTime = 0;
+
+uint32_t predictNextBeat() {
+    if (smoothedBPM <= 0) return 0;
+    uint32_t beatIntervalMs = (uint32_t)(60000.0f / smoothedBPM);
+    return lastBeatTime + beatIntervalMs;
+}
+
+// In the LED update loop:
+float beatPhase(uint32_t now) {
+    if (smoothedBPM <= 0) return 0;
+    uint32_t interval = (uint32_t)(60000.0f / smoothedBPM);
+    uint32_t elapsed = now - lastBeatTime;
+    return (float)(elapsed % interval) / (float)interval;  // 0.0 to 1.0
+}
+```
+
+`beatPhase()` returns a 0.0-1.0 value representing position within the current beat cycle. Use this to drive continuous animations (pulsing, rotating patterns) that stay synchronized to the music.
+
+## Beat Quantization
+
+Beat quantization snaps user-triggered events (e.g., RF remote button presses, mode changes) to the nearest beat boundary. This makes transitions feel musically synchronized even when the trigger arrives slightly early or late.
+
+### Why Quantize
+
+- RF remotes add variable latency (estimated tens of milliseconds for encoding, transmission, and decoding; actual values depend on protocol and environment).
+- Human button presses have ~50-100 ms of timing imprecision.
+- Quantization absorbs this jitter by delaying the action to the next beat boundary.
+
+### Implementation
+
+```cpp
+uint32_t quantizeToNextBeat(uint32_t triggerTime) {
+    if (smoothedBPM <= 0) return triggerTime;  // No BPM, act immediately
+
+    uint32_t interval = (uint32_t)(60000.0f / smoothedBPM);
+    uint32_t elapsed = triggerTime - lastBeatTime;
+    uint32_t posInBeat = elapsed % interval;
+
+    // Snap to nearest beat boundary
+    if (posInBeat < interval / 2) {
+        // Closer to previous beat — trigger immediately (already past)
+        return triggerTime;
+    } else {
+        // Closer to next beat — delay until next beat
+        return triggerTime + (interval - posInBeat);
+    }
+}
+```
+
+### Quantization Options
+
+| Strategy | Behavior | Use Case |
+|----------|----------|----------|
+| **Next beat** | Always wait for the next beat | Mode transitions, scene changes |
+| **Nearest beat** | Snap to whichever boundary is closer | Color triggers, flash effects |
+| **Immediate** | No quantization | Direct brightness control, power toggle |
+
+For multi-zone systems, quantize all zone transitions to the same beat boundary so they appear synchronized.
 
 ## Task Architecture for Audio-Reactive System
 

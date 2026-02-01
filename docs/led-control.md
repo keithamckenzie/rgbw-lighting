@@ -11,17 +11,16 @@ Color model, addressable strip protocols (SK6812 RGBW, WS2815B RGB), PWM channel
 
 ## Addressable Strips (SK6812 RGBW and WS2815B RGB)
 
-The `LEDStrip` library supports both strip types via the `StripType` enum:
+The `LEDStrip` library uses **NeoPixelBus** (by Makuna) as its underlying driver. Strip type is a compile-time template parameter, matching NeoPixelBus's own architecture:
 
 ```cpp
 #include "led_strip.h"
 
-// SK6812 RGBW (default, backward-compatible)
-LEDStrip rgbwStrip(5, 30);
-LEDStrip rgbwStrip(5, 30, StripType::SK6812_RGBW);
+// SK6812 RGBW
+LEDStrip<StripType::SK6812_RGBW> rgbwStrip(5, 30);
 
 // WS2815B RGB
-LEDStrip rgbStrip(5, 60, StripType::WS2815B_RGB);
+LEDStrip<StripType::WS2815B_RGB> rgbStrip(5, 60);
 ```
 
 Both strip types use the same `RGBW` color model. For WS2815B (3-channel), the white channel is folded back into RGB at output time (`show()` handles this automatically). This means all color math, animations, and effects work identically regardless of strip type.
@@ -33,7 +32,7 @@ Both strip types use the same `RGBW` color model. For WS2815B (3-channel), the w
 | **Channels**           | 4 (R, G, B, W)           | 3 (R, G, B)              |
 | **Bits per pixel**     | 32                        | 24                        |
 | **Byte order**         | GRB+W                     | GRB                       |
-| **NeoPixel flags**     | `NEO_GRBW + NEO_KHZ800`  | `NEO_GRB + NEO_KHZ800`   |
+| **NeoPixelBus Feature/Method** | `NeoGrbwFeature` / `Sk6812Method` | `NeoGrbFeature` / `Ws2812xMethod` |
 | **Operating voltage**  | 5V                        | 12V                       |
 | **Current (full white)** | ~80 mA @ 5V (commonly cited as ~20 mA/ch) | ~30 mA @ 12V (commonly cited as ~10 mA/ch) |
 | **Power per LED**      | ~400 mW                   | ~360 mW                   |
@@ -89,10 +88,10 @@ For smooth animation, target 30+ FPS. This caps practical strip length at ~800 p
 
 ### Timing Quirks and Practical Notes
 
-- **Byte order is GRBW, not RGBW.** Green byte is transmitted first. The `NEO_GRBW` flag handles this.
+- **Byte order is GRBW, not RGBW.** Green byte is transmitted first. NeoPixelBus's `NeoGrbwFeature` handles this.
 - **The +/- 150 ns tolerance is generous** but a T0H of exactly 450 ns sits at the 0/1 boundary and may cause glitches on some batches.
 - **Real-world clones vary.** Some SK6812 variants need T0H closer to 350 ns. If you see random color glitches, timing margin is the first suspect.
-- **Many implementations use 300+ us reset for safety.** The Adafruit NeoPixel library uses ~300 us by default. Using exactly 80 us can cause issues on strips with slightly longer latch requirements.
+- **Many implementations use 300+ us reset for safety.** NeoPixelBus uses protocol-appropriate reset times by default. Using exactly 80 us can cause issues on strips with slightly longer latch requirements.
 - **Data appears to be latched on the reset pulse (observed behavior, not documented in IC datasheets).** In practice, a partial frame (if interrupted mid-transfer) does not produce a partial update — the strip retains the previous complete frame.
 - **Internal PWM refresh (~1.2 kHz for SK6812, ~2 kHz for WS2815).** This is visible in fast-panning camera footage (not to the naked eye). There is no way to change this rate.
 - **Each channel has internal constant-current regulation** (commonly cited as ~20 mA per channel for SK6812, ~10 mA for WS2815B). Brightness is stable across a range of supply voltages.
@@ -163,7 +162,7 @@ Both strip types use 5V-logic data lines (WS2815B has an internal regulator desp
 
 ### RMT Channel Limits (ESP32)
 
-Multiple `LEDStrip` instances are supported (each gets its own NeoPixel driver). Limited by RMT TX channels:
+Multiple `LEDStrip` instances are supported (each gets its own NeoPixelBus driver). Limited by RMT TX channels:
 
 | Chip       | RMT TX | RMT RX | Max strips (RMT) | Notes |
 |------------|--------|--------|-------------------|-------|
@@ -172,7 +171,7 @@ Multiple `LEDStrip` instances are supported (each gets its own NeoPixel driver).
 | ESP32-S3   | 4      | 4      | 4                 | TX and RX channels are separate |
 | ESP32-C3   | 2      | 2      | 2                 | |
 
-- When you run out of RMT TX channels, NeoPixelBus provides I2S and SPI methods as alternatives. Do not mix Adafruit NeoPixel and NeoPixelBus in the same project -- they will fight over RMT channels.
+- `LEDStrip` uses `NeoEsp32RmtN*` methods on ESP32, which support runtime RMT channel assignment. Each `LEDStrip` instance automatically claims the next available RMT TX channel via a static counter. No manual channel assignment is needed — just create multiple `LEDStrip` instances on different pins. If all RMT TX channels are exhausted, `Begin()` will fail. When you run out of RMT TX channels, NeoPixelBus provides I2S and SPI methods as alternatives.
 - If using an IR receiver alongside LED strips, assign IR to an RX-only channel so it doesn't consume TX channels.
 - **I2S LED output caveat:** Using I2S for LED output conflicts with I2S audio input. Do not use the I2S LED method on the same I2S peripheral as your audio input.
 
@@ -183,6 +182,45 @@ Long LED strips are effectively antennas. The 800 kHz data signal and its harmon
 - Use ferrite cores on the data line and power cables near the controller if you experience radio interference.
 - Keep strip data/power wires at least 5-10 cm away from the ESP32's WiFi antenna area.
 
+## 24V Non-Addressable Strips (COB / SMD)
+
+Non-addressable strips have no data line — brightness and color are controlled entirely by PWM via MOSFETs (the `LEDPWM` library). Each color channel is a continuous circuit switched by its own MOSFET.
+
+### COB (Chip-On-Board) Strips
+
+COB strips use densely packed bare LED dies bonded directly to the PCB, producing a continuous line of light with no visible hotspots. Example product: LBL-COB-280-24V-8MM-100FT-IP20 (280 LEDs/m, 24V, 8mm width). Specs below are representative of this class of strip; actual values vary by manufacturer and density — always check the specific product's datasheet.
+
+| Parameter | Typical Value | Notes |
+|-----------|--------------|-------|
+| **Operating voltage** | 24V DC | Higher voltage = lower current = longer runs |
+| **Power consumption** | ~1.5 W/ft (~5 W/m) | Varies by density and manufacturer; check datasheet |
+| **Cut points** | Every 3 LEDs (~10.7 mm at 280/m) | Marked on the strip; cutting elsewhere damages the circuit |
+| **Max run (single feed)** | 5-10 m | Depends on power rating and wire gauge; measure voltage at far end |
+| **IP rating** | IP20 (bare), IP65 (silicone sleeve) | IP20 for indoor; IP65+ for outdoor/wet |
+| **Dimming** | PWM via MOSFET | No data protocol; brightness is purely duty cycle |
+
+### Single-Color vs Multi-Channel Non-Addressable
+
+- **Single-color (warm white, cool white, etc.):** Two wires (+24V and GND). One MOSFET per zone for dimming.
+- **RGB:** Four wires (+24V, R, G, B cathodes). Three MOSFETs per zone.
+- **RGBW:** Five wires (+24V, R, G, B, W cathodes). Four MOSFETs per zone. Use the `LEDPWM` library directly.
+
+### Power Budget for 24V Non-Addressable
+
+At 24V, current is lower for the same wattage compared to 5V strips:
+
+| Strip Rating | Current per Meter | 5m Run Current | PSU (20% headroom) |
+|-------------|-------------------|----------------|---------------------|
+| 5 W/m | 0.21 A/m | 1.04 A | 24V 1.5A (36W) |
+| 10 W/m | 0.42 A/m | 2.08 A | 24V 2.5A (60W) |
+| 14 W/m | 0.58 A/m | 2.92 A | 24V 3.5A (84W) |
+
+Power injection is needed less frequently at 24V than at 5V due to lower current. For runs under 5m at moderate brightness, a single power feed at the head is typically sufficient.
+
+### Software Control
+
+Non-addressable strips are driven by the `LEDPWM` library, not `LEDStrip`. All color math (`hsvToRGBW()`, `lerpRGBW()`, `scaleBrightness()`, gamma correction) applies identically — the difference is only in the output stage (PWM duty cycle instead of NRZ data protocol).
+
 ## PWM Channels (MOSFET-driven)
 
 - Use the `LEDPWM` library for discrete R, G, B, W channels via MOSFETs.
@@ -192,14 +230,16 @@ Long LED strips are effectively antennas. The 800 kHz data signal and its harmon
 ### N-Channel MOSFET Wiring
 
 - **Low-side switching** (MOSFET between LED strip and GND): simpler, preferred for LED strips.
-- Gate -> ESP32 GPIO pin (through 100 ohm resistor to limit ringing).
+- Gate -> ESP32 GPIO pin (through a series gate resistor — see below).
 - Source -> GND.
 - Drain -> LED strip cathode (R, G, B, or W channel).
 - Add 10k ohm pull-down resistor from gate to GND to ensure MOSFET stays off during boot.
 
+**Gate resistor selection (100R vs 220R):** Both values are valid. 100 ohm provides faster switching transitions and is specified in IRLB8721 application notes — use this as the default. 220 ohm provides more conservative switching with additional GPIO current protection and less ringing on longer gate traces — common in hobby circuits and a reasonable choice when switching speed is not critical (PWM frequencies under 50 kHz). Either value works for LED PWM dimming at 20 kHz.
+
 ### ESP32 LEDC Resolution/Frequency (APB_CLK = 80 MHz)
 
-The current default of 5 kHz / 8-bit is adequate for prototyping but 8-bit has visible stepping at low brightness. Upgrade to 12-bit for production.
+The default is 19531 Hz / 12-bit, which balances smooth dimming (4096 levels) with inaudible PWM frequency.
 
 | Resolution (bits) | Max Frequency | Levels | Use Case                    |
 |-------------------|---------------|--------|-----------------------------|
@@ -213,8 +253,8 @@ Recommended: **12-bit at ~19.5 kHz** balances smooth dimming with inaudible PWM 
 
 ### PWM Frequency Notes
 
-- 5 kHz default is silent and flicker-free for most LEDs.
-- Increase to 20+ kHz if audible buzzing occurs from inductance.
+- 19.5 kHz default is above human hearing range and flicker-free.
+- Lower frequencies (5 kHz) may cause audible buzzing from MOSFET/inductor resonance.
 - ESP32 LEDC max frequency = APB_CLK / (2^resolution). With default 80 MHz APB clock: 312.5 kHz at 8-bit, 19.5 kHz at 12-bit.
 
 ## Gamma Correction

@@ -136,7 +136,113 @@ The NimBLE migration alone frees enough RAM to make a full system (WiFi + BLE + 
 ### WiFi + BLE Coexistence
 
 - Both share the ESP32 radio. Coexistence is handled by the IDF coexistence module.
-- On AVR, `show()` disables interrupts during transmission, which can disrupt WiFi/BLE on dual-use setups. On ESP32, the RMT peripheral handles timing in hardware without disabling interrupts. For long strips, keep update frequency reasonable to avoid starving other tasks.
+- On AVR, `show()` disables interrupts during transmission, which can disrupt other time-critical tasks and interrupts (serial, timers, etc.). On ESP32, the RMT peripheral handles timing in hardware without disabling interrupts. For long strips, keep update frequency reasonable to avoid starving other tasks.
+
+## 433 MHz RF Remote Control
+
+433 MHz RF provides simple, low-latency wireless control without WiFi/BLE overhead. A remote sends fixed codes; the ESP32 receives and maps them to actions.
+
+### Hardware
+
+**Remote:** Sonoff RM433R2 (or similar 433 MHz EV1527-based remote). Each button transmits a unique fixed code. The code is set at the factory and printed on a sticker or discoverable via the learning process below.
+
+**Receiver:** RXB6 433 MHz superheterodyne receiver module. Superheterodyne receivers have significantly better sensitivity and range than the cheaper regenerative (XY-MK-5V) modules.
+
+| RXB6 Pin | Connection |
+|----------|------------|
+| VCC | 3.3V or 5V (5V gives better range) |
+| GND | ESP32 GND |
+| DATA | ESP32 GPIO (any safe input pin, e.g., GPIO 27) |
+| ANT | 17.3 cm straight wire (quarter-wave antenna for 433 MHz) |
+
+**Antenna:** A 17.3 cm straight wire soldered to the ANT pad provides a basic quarter-wave antenna. For better range, use a coiled helical antenna or an SMA connector with a proper 433 MHz antenna. Without an antenna, range is limited to ~1-2 meters.
+
+### Software (rc-switch Library)
+
+The `rc-switch` library (`sui77/rc-switch`) handles decoding of common 433 MHz protocols (EV1527, PT2262, etc.).
+
+**PlatformIO dependency** (already in `apps/example-rgbw/platformio.ini`):
+```ini
+lib_deps =
+    sui77/rc-switch@^2.6.4
+```
+
+### Learning Button Codes
+
+Run this sketch to discover the codes transmitted by each remote button:
+
+```cpp
+#include <RCSwitch.h>
+
+#define RF_RX_PIN 27
+
+RCSwitch rf = RCSwitch();
+
+void setup() {
+    Serial.begin(115200);
+    rf.enableReceive(digitalPinToInterrupt(RF_RX_PIN));
+}
+
+void loop() {
+    if (rf.available()) {
+        Serial.printf("Code: %lu  Bits: %u  Protocol: %u\n",
+                       rf.getReceivedValue(),
+                       rf.getReceivedBitlength(),
+                       rf.getReceivedProtocol());
+        rf.resetAvailable();
+    }
+}
+```
+
+Press each remote button and note the code values. These are stable per-button (fixed code, not rolling).
+
+### Mapping Codes to Actions
+
+```cpp
+#include <RCSwitch.h>
+
+#define RF_RX_PIN 27
+
+// Codes discovered from the learning sketch
+static const uint32_t RF_CODE_ON     = 1234567;  // Replace with actual codes
+static const uint32_t RF_CODE_OFF    = 1234568;
+static const uint32_t RF_CODE_MODE   = 1234569;
+static const uint32_t RF_CODE_BRIGHT = 1234570;
+
+RCSwitch rf = RCSwitch();
+uint32_t lastRfTime = 0;
+const uint32_t RF_DEBOUNCE_MS = 250;  // Ignore repeated codes within 250 ms
+
+void setup() {
+    rf.enableReceive(digitalPinToInterrupt(RF_RX_PIN));
+}
+
+void handleRF() {
+    if (!rf.available()) return;
+
+    uint32_t now = millis();
+    uint32_t code = rf.getReceivedValue();
+    rf.resetAvailable();
+
+    if (code == 0 || (now - lastRfTime) < RF_DEBOUNCE_MS) return;
+    lastRfTime = now;
+
+    switch (code) {
+        case RF_CODE_ON:     powerOn();         break;
+        case RF_CODE_OFF:    powerOff();        break;
+        case RF_CODE_MODE:   cycleMode();       break;
+        case RF_CODE_BRIGHT: cycleBrightness(); break;
+    }
+}
+```
+
+### Notes
+
+- **Latency:** 433 MHz RF adds variable transmission latency (estimated tens of milliseconds; depends on protocol, encoding, and environment). For sound-reactive modes, consider [beat quantization](audio-reactive.md#beat-quantization) to absorb timing jitter.
+- **Range:** Depends heavily on antenna, supply voltage, obstacles, and interference. With RXB6 at 5V and a 17.3 cm quarter-wave antenna, indoor range through walls is typically several tens of meters; line-of-sight range is longer. Test in your actual environment.
+- **Interference:** Other 433 MHz devices (garage doors, weather stations, smart plugs) may trigger spurious codes. The debounce and code-matching logic filters these out, but avoid using generic codes that might collide.
+- **ISR usage:** `rc-switch` uses a pin interrupt internally. The GPIO pin must support interrupts (`digitalPinToInterrupt()` must return a valid value).
+- **Security:** EV1527 uses OTP fixed codes (20-bit address + 4-bit data), not rolling or encrypted codes. Receivers "learn" a remote's fixed code during a pairing/learning step, but the code itself is static and can be replayed. Acceptable for lighting control but not for security-sensitive applications.
 
 ### Credentials and Security
 

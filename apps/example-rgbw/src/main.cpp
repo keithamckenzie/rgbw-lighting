@@ -5,7 +5,7 @@
 #define LED_PIN     5
 #define NUM_LEDS    30
 
-LEDStrip strip(LED_PIN, NUM_LEDS);
+LEDStrip<StripType::SK6812_RGBW> strip(LED_PIN, NUM_LEDS);
 
 void setup() {
     Serial.begin(115200);

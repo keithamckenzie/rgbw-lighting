@@ -9,7 +9,7 @@ apps/                   # Each app is a standalone PlatformIO project
   example-rgbw/         # Template app — copy this to start a new project
 shared/lib/             # Shared libraries used across apps
   RGBWCommon/           # Color types (RGBW, HSV), conversions, utilities
-  LEDStrip/             # Addressable SK6812 RGBW strip driver
+  LEDStrip/             # Addressable strip driver (SK6812 RGBW, WS2815B RGB) via NeoPixelBus
   LEDPWM/              # PWM-based RGBW channel driver (MOSFET/discrete LEDs)
   Connectivity/         # WiFi and BLE managers (ESP32 only)
 ```
@@ -27,8 +27,8 @@ Shared libraries are automatically available via `lib_extra_dirs` in each app's 
 
 | Board | LED Type | Connectivity |
 |-------|----------|-------------|
-| ESP32 | SK6812 strips, PWM channels | WiFi, BLE |
-| Arduino Uno/Mega | SK6812 strips, PWM channels | — |
+| ESP32 | SK6812 RGBW / WS2815B RGB strips, PWM channels | WiFi, BLE |
+| Arduino Uno/Mega | SK6812 RGBW / WS2815B RGB strips, PWM channels | — |
 
 ## Building
 

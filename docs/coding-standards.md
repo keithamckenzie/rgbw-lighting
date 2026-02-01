@@ -99,7 +99,7 @@ Benefits:
 #endif
 
 // 3. External library headers
-#include <Adafruit_NeoPixel.h>
+#include <NeoPixelBus.h>
 
 // 4. Project library headers
 #include "rgbw.h"
@@ -162,23 +162,17 @@ enum class LedError : uint8_t {
 
 ```cpp
 // Return error codes from functions
-LedError LEDStrip::setPixel(uint16_t index, const RGBW& color) {
-    if (index >= _numLeds) return LedError::InvalidIndex;
-    _pixels[index] = color;
+LedError readSensorValue(uint8_t channel, uint16_t* value) {
+    if (channel >= MAX_CHANNELS) return LedError::InvalidIndex;
+    if (!value) return LedError::InvalidIndex;
+    *value = analogRead(channel);
     return LedError::Ok;
 }
 
 // Check at call site
-if (strip.setPixel(i, color) != LedError::Ok) {
-    ESP_LOGE(TAG, "Failed to set pixel %u", i);
-}
-
-// For functions that return values, use output parameters
-LedError readSensor(uint16_t* value) {
-    if (!value) return LedError::InvalidIndex;
-    // ... read hardware ...
-    *value = rawReading;
-    return LedError::Ok;
+uint16_t sensorVal;
+if (readSensorValue(0, &sensorVal) != LedError::Ok) {
+    ESP_LOGE(TAG, "Failed to read sensor on channel 0");
 }
 ```
 
@@ -216,10 +210,10 @@ SRAM totals are per datasheet; usable heap is less due to IDF, stack, and static
 ### LED Buffer Sizing
 
 Each pixel requires:
-- RGBW (SK6812): 4 bytes per pixel in application buffer + NeoPixel internal buffer
-- RGB (WS2815B): 4 bytes in app buffer (RGBW model) + 3 bytes in NeoPixel internal buffer
+- RGBW (SK6812): 4 bytes per pixel in application buffer + NeoPixelBus internal buffer
+- RGB (WS2815B): 4 bytes in app buffer (RGBW model) + 3 bytes in NeoPixelBus internal buffer
 
-| Strip Length | App Buffer | NeoPixel Buffer (RGBW) | NeoPixel Buffer (RGB) | Total (RGBW) |
+| Strip Length | App Buffer | NeoPixelBus Buffer (RGBW) | NeoPixelBus Buffer (RGB) | Total (RGBW) |
 |-------------|-----------|----------------------|---------------------|-------------|
 | 30 LEDs | 120 B | 120 B | 90 B | 240 B |
 | 60 LEDs | 240 B | 240 B | 180 B | 480 B |
@@ -273,9 +267,11 @@ Use `#ifdef ESP32` for platform-specific code. Shared libraries already follow t
 void LEDPWM::_applyColor() {
     RGBW scaled = scaleBrightness(_currentColor, _brightness);
 #ifdef ESP32
-    ledcWrite(_pins.r, scaled.r);  // LEDC peripheral
+    // Scale 8-bit channel values to match configured resolution
+    uint32_t maxDuty = (1 << _resolution) - 1;
+    ledcWrite(_pins.r, (uint32_t)scaled.r * maxDuty / 255);  // LEDC peripheral
 #else
-    analogWrite(_pins.r, scaled.r); // AVR analogWrite
+    analogWrite(_pins.r, scaled.r); // AVR analogWrite (8-bit)
 #endif
 }
 ```

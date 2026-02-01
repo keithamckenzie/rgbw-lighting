@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-PlatformIO monorepo for RGBW LED lighting controllers targeting ESP32 and Arduino (AVR) platforms. The system supports addressable LED strips (SK6812 RGBW and WS2815B RGB), PWM-driven MOSFET channels, I2C microphones for sound-reactive lighting, RCA audio input, WiFi/BLE wireless control, and physical switches.
+PlatformIO monorepo for RGBW LED lighting controllers targeting ESP32 and Arduino (AVR) platforms. The system supports addressable LED strips (SK6812 RGBW and WS2815B RGB), PWM-driven MOSFET channels, I2S microphones for sound-reactive lighting, RCA audio input, WiFi/BLE wireless control, and physical switches.
 
 ## Repository Structure
 
@@ -199,9 +199,11 @@ Use `#ifdef ESP32` for platform-specific code. Shared libraries already follow t
 void LEDPWM::_applyColor() {
     RGBW scaled = scaleBrightness(_currentColor, _brightness);
 #ifdef ESP32
-    ledcWrite(_pins.r, scaled.r);  // LEDC peripheral
+    // Scale 8-bit channel values to match configured resolution
+    uint32_t maxDuty = (1 << _resolution) - 1;
+    ledcWrite(_pins.r, (uint32_t)scaled.r * maxDuty / 255);  // LEDC peripheral
 #else
-    analogWrite(_pins.r, scaled.r); // AVR analogWrite
+    analogWrite(_pins.r, scaled.r); // AVR analogWrite (8-bit)
 #endif
 }
 ```
@@ -217,17 +219,16 @@ void LEDPWM::_applyColor() {
 
 ### Addressable Strips (SK6812 RGBW and WS2815B RGB)
 
-We use **NeoPixelBus** (by Makuna) instead of Adafruit NeoPixel for superior ESP32 hardware support (RMT/I2S DMA) and native RGBW types.
+The `LEDStrip` library uses **NeoPixelBus** (by Makuna) for addressable LED output. Strip type is a compile-time template parameter:
 
 ```cpp
-#include <NeoPixelBus.h>
+#include "led_strip.h"
 
-// ESP32: Use RMT (NeoPixelBus default) or I2S
 // SK6812 RGBW
-NeoPixelBus<NeoGrbwFeature, Neo800KbpsMethod> strip(pixelCount, pixelPin);
+LEDStrip<StripType::SK6812_RGBW> rgbwStrip(5, 30);
 
-// WS2815B RGB (GRB Order)
-NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> strip(pixelCount, pixelPin);
+// WS2815B RGB
+LEDStrip<StripType::WS2815B_RGB> rgbStrip(5, 60);
 ```
 
 #### Protocol Comparison
@@ -237,7 +238,7 @@ NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> strip(pixelCount, pixelPin);
 | **Channels**           | 4 (R, G, B, W)           | 3 (R, G, B)              |
 | **Bits per pixel**     | 32                        | 24                        |
 | **Byte order**         | GRB+W                     | GRB                       |
-| **Method (NeoPixelBus)**| `NeoGrbwFeature`        | `NeoGrbFeature`          |
+| **NeoPixelBus Feature/Method** | `NeoGrbwFeature` / `Sk6812Method` | `NeoGrbFeature` / `Ws2812xMethod` |
 | **Operating voltage**  | 5V                        | 12V                       |
 | **Current (full white)** | ~80 mA @ 5V (20 mA/ch) | ~18 mA @ 12V (~6 mA/ch)  |
 | **Power per LED**      | ~400 mW                   | ~216 mW                   |
@@ -270,7 +271,7 @@ Recommended: **12-bit at ~19.5 kHz**.
 
 ### Gamma Correction
 
-Human vision perceives brightness logarithmically. Apply gamma correction for perceptually uniform dimming. NeoPixelBus has `NeoGamma<NeoGammaTableMethod>` built-in, but we also maintain our own lookup table for PWM channels.
+Human vision perceives brightness logarithmically. Apply gamma correction for perceptually uniform dimming. See `docs/led-control.md` for the gamma 2.2 lookup table used on PWM channels. NeoPixelBus provides `NeoGamma<NeoGammaTableMethod>` built-in (currently using `NeoGammaNullMethod` for no gamma; swap when ready).
 
 ### Power Management
 
@@ -328,7 +329,7 @@ To allow control from PC software (xLights, Vixen, Jinx!), we implement standard
 
 ### WiFi + BLE Coexistence
 - Both share the ESP32 radio.
-- **Critical:** Using `NeoPixelBus` (RMT/I2S) prevents LED updates from disabling interrupts, which is the #1 cause of connection instability in ESP32 LED projects.
+- **Critical:** On ESP32, the RMT peripheral handles LED timing in hardware without disabling interrupts. On AVR, `show()` disables interrupts during transmission, which can disrupt wireless connectivity.
 
 ## FreeRTOS (ESP32)
 
@@ -353,7 +354,7 @@ To allow control from PC software (xLights, Vixen, Jinx!), we implement standard
 
 | Component | Recommended Library | Why? |
 |-----------|---------------------|------|
-| **LED Driver** | **NeoPixelBus** | Non-blocking DMA/RMT, native RGBW, better stability. |
+| **LED Driver** | **NeoPixelBus** | Non-blocking DMA/RMT, native RGBW types, template-based strip selection. |
 | **BLE** | **NimBLE-Arduino** | Saves ~100KB RAM, 50% Flash vs default stack. |
 | **Web Server** | **ESPAsyncWebServer** | Non-blocking, smooth animations while serving pages. |
 | **FFT** | **ESP-DSP** | Hardware accelerated (SIMD), 5x-10x faster. |

@@ -4,42 +4,39 @@ Library upgrade paths, planned shared libraries, and known improvement notes for
 
 ## Library Upgrade Path
 
-The current libraries use Adafruit NeoPixel and the default ESP32 BLE stack. For production firmware, consider these upgrades:
+The default ESP32 BLE stack should be upgraded for production firmware:
 
-| Current | Upgrade | Benefit |
-|---------|---------|---------|
-| Adafruit NeoPixel | **NeoPixelBus** | Native `RgbColor`/`RgbwColor` types, selectable RMT/I2S/DMA drivers, built-in gamma correction, explicit SK6812/WS2815 method classes |
-| ESP32 BLE stack | **NimBLE-Arduino** | Reported testing shows ~50% less flash and ~100 KB less RAM vs Bluedroid; aims for API compatibility |
+| Current | Upgrade | Benefit | Status |
+|---------|---------|---------|--------|
+| ~~Adafruit NeoPixel~~ | ~~**NeoPixelBus**~~ | ~~Native `RgbColor`/`RgbwColor` types, selectable RMT/I2S/DMA drivers, built-in gamma correction, explicit SK6812/WS2815 method classes~~ | **Done** — `LEDStrip` now uses NeoPixelBus with template-based `LEDStrip<StripType>` API |
+| ESP32 BLE stack | **NimBLE-Arduino** | Reported testing shows ~50% less flash and ~100 KB less RAM vs Bluedroid; aims for API compatibility | Planned |
 | WebServer (sync) | **ESPAsyncWebServer** + WebSocket | Non-blocking, low-latency real-time color control |
 | analogRead polling | **I2S ADC DMA mode** | Continuous audio sampling without CPU blocking |
 | arduinoFFT | **ESP-DSP** (ESP32 only) | Xtensa SIMD-accelerated FFT; keep arduinoFFT for AVR/host tests |
 
-### NeoPixelBus Migration Notes
+### NeoPixelBus Migration (Completed)
 
-NeoPixelBus uses template-based strip type selection instead of runtime flags:
+The `LEDStrip` library now uses NeoPixelBus with a template-based API:
 
 ```cpp
-// Adafruit NeoPixel (current)
-Adafruit_NeoPixel strip(NUM_LEDS, PIN, NEO_GRBW + NEO_KHZ800);
-strip.setPixelColor(i, r, g, b, w);
+#include "led_strip.h"
 
-// NeoPixelBus (upgrade) - SK6812 RGBW with RMT
-#include <NeoPixelBus.h>
-NeoPixelBus<NeoGrbwFeature, NeoEsp32RmtNSk6812Method> strip(NUM_LEDS, PIN);
-strip.SetPixelColor(i, RgbwColor(r, g, b, w));
+// SK6812 RGBW
+LEDStrip<StripType::SK6812_RGBW> strip(LED_PIN, NUM_LEDS);
 
-// NeoPixelBus - WS2815 RGB with RMT
-NeoPixelBus<NeoGrbFeature, NeoEsp32RmtNWs2812xMethod> strip(NUM_LEDS, PIN);
-strip.SetPixelColor(i, RgbColor(r, g, b));
+// WS2815B RGB
+LEDStrip<StripType::WS2815B_RGB> strip(LED_PIN, NUM_LEDS);
 ```
 
-Key differences:
-- Strip type is a compile-time template parameter, not runtime
-- Built-in `RgbwColor` and `RgbColor` types with color math methods
-- Built-in gamma correction via `NeoGamma<NeoGammaTableMethod>`
-- Multiple driver backends: RMT (default, recommended), I2S, SPI, bit-bang
+Implementation details:
+- Strip type is a compile-time template parameter (zero virtual dispatch overhead)
+- PIMPL pattern keeps NeoPixelBus headers out of the public API
+- Uses `NeoPixelBusLg` for master brightness via `SetLuminance()`
+- ESP32: Uses `NeoEsp32RmtNSk6812Method` / `NeoEsp32RmtNWs2812xMethod` with auto-assigned RMT channels (via 3-arg `NeoPixelBusLg` constructor). AVR: Uses generic `NeoSk6812Method` / `NeoWs2812xMethod` aliases (bit-bang).
+- Multiple strips on ESP32 are supported automatically — each instance claims the next RMT TX channel via a static counter. No manual channel assignment needed.
+- Gamma: `NeoGammaNullMethod` (no gamma, matching previous behavior). Future: swap to `NeoGammaTableMethod`
+- Separate `RGBW* _pixels` buffer preserves un-folded, un-dimmed source colors
 - When RMT channels are exhausted, switch specific strips to I2S or SPI method
-- Do NOT mix Adafruit NeoPixel and NeoPixelBus in the same project (RMT channel conflicts)
 
 ### NimBLE-Arduino Migration Notes
 
@@ -163,7 +160,7 @@ These are documented improvements to apply as the codebase matures:
 
 ### LEDPWM Library
 
-- **Resolution upgrade:** Increase default from 8-bit to 12-bit. 8-bit has visible stepping at low brightness; 12-bit at 19.5 kHz is the sweet spot for smooth dimming.
+- ~~**Resolution upgrade:** Increase default from 8-bit to 12-bit.~~ **Done:** Default is now 19531 Hz / 12-bit. `_applyColor()` scales 8-bit channel values to the configured resolution.
 - **Gamma correction:** Add gamma correction in `_applyColor()`. Currently outputs linear PWM which doesn't match human brightness perception. See gamma correction details in [led-control.md](led-control.md#gamma-correction).
 - **Hardware fade:** Consider adding `ledcFade()` for hardware-accelerated smooth transitions between colors. This offloads transition computation to the LEDC peripheral.
 
@@ -175,6 +172,7 @@ These are documented improvements to apply as the codebase matures:
 ### LEDStrip Library
 
 - ~~**Static pointer issue:** The static `_neopixel` pointer prevents multiple strip instances.~~ **Fixed:** `_neopixel` is now a per-instance member. Multiple strips with different types (SK6812/WS2815B) are supported.
+- ~~**NeoPixelBus migration:** Migrate from Adafruit NeoPixel to NeoPixelBus.~~ **Done:** Template-based `LEDStrip<StripType>` API using `NeoPixelBusLg` with PIMPL pattern. Adafruit NeoPixel dependency removed.
 
 ### Connectivity/WiFiManager
 

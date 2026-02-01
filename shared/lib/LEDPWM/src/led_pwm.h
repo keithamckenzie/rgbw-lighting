@@ -12,7 +12,7 @@ struct PWMPins {
 
 class LEDPWM {
 public:
-    LEDPWM(const PWMPins& pins, uint32_t frequency = 5000, uint8_t resolution = 8);
+    LEDPWM(const PWMPins& pins, uint32_t frequency = 19531, uint8_t resolution = 12);
 
     void begin();
     void setColor(const RGBW& color);

@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-PlatformIO monorepo for RGBW LED lighting controllers targeting ESP32 and Arduino (AVR) platforms. The system supports addressable LED strips (SK6812 RGBW and WS2815B RGB), PWM-driven MOSFET channels, I2C microphones for sound-reactive lighting, RCA audio input, WiFi/BLE wireless control, and physical switches.
+PlatformIO monorepo for RGBW LED lighting controllers targeting ESP32 and Arduino (AVR) platforms. The system supports addressable LED strips (SK6812 RGBW and WS2815B RGB), PWM-driven MOSFET channels, I2S microphones for sound-reactive lighting, RCA audio input, WiFi/BLE wireless control, and physical switches.
 
 ---
 
@@ -270,30 +270,38 @@ Connectivity        (ESP32 only, no internal lib dependencies)
 ## LED Control Summary
 
 - **Color model:** RGBW (4 bytes) and HSV (hue 0-360, sat/val 0-255). `hsvToRGBW()` extracts white from min(RGB).
+- **Addressable driver:** NeoPixelBus via template-based `LEDStrip<StripType>` (e.g. `LEDStrip<StripType::SK6812_RGBW> strip(pin, numLeds);`).
 - **SK6812 RGBW:** 4-channel, 5V, 32-bit, 80 mA/LED, dedicated white die. Reset >= 80 us.
 - **WS2815B RGB:** 3-channel, 12V, 24-bit, 30 mA/LED, backup data line (BIN). Reset >= 280 us.
 - **Both** use 800 kHz NRZ protocol. White channel folded into RGB automatically for WS2815B.
-- **PWM (MOSFET):** Use `LEDPWM` library. Recommend 12-bit at 19.5 kHz for smooth dimming.
+- **24V non-addressable (COB/SMD):** No data line; controlled purely by `LEDPWM` via MOSFETs.
+- **PWM (MOSFET):** Use `LEDPWM` library. Default 12-bit at 19.5 kHz for smooth dimming.
 - **Gamma correction:** Apply gamma 2.2 LUT for perceptually uniform brightness.
 
 -> Full LED specs, timing, level shifting, signal conditioning, MOSFET wiring, gamma: **[docs/led-control.md](docs/led-control.md)**
 
 ## Power and Wiring Summary
 
+- **Safety:** Fuse main PSU output and per-zone runs. AC/DC separation — mains confined to PSU only.
 - **SK6812:** 80 mA/LED @ 5V. Power injection every 1-2m.
 - **WS2815B:** 30 mA/LED @ 12V. Runs 5-10m without injection.
-- **Wire gauge:** 18 AWG default. Never thinner than 22 AWG for power.
+- **Wire gauge:** 18 AWG default. Never thinner than 22 AWG for power. Future-proof runs with extra conductors.
 - **Brownout:** Separate 3.3V regulation for ESP32. Bulk caps. Software soft-start.
 - **MOSFET:** Low-side N-channel (IRLB8721). 100R gate resistor, 10k pull-down.
+- **Multi-zone:** Home-run wiring, centralized MOSFETs, one per zone per channel, common ground across PSUs. Check PSU isolation before bonding negatives.
+- **Buck converter:** 24V/12V -> 5V (dev board) or 3.3V (bare module) for ESP32 power.
+- **Line-voltage fixtures:** Not GPIO-direct; use smart switches, triac hardware (zero-cross + optotriac), 0-10V dimmers (check sink vs source), or DALI gateways.
 
--> Full power budget, injection patterns, connectors, wire gauge tables, brownout mitigation, switches: **[docs/power-and-wiring.md](docs/power-and-wiring.md)**
+-> Full power budget, safety/fusing, injection, connectors, wire gauge, brownout, multi-zone, buck converters, line-voltage fixtures, switches: **[docs/power-and-wiring.md](docs/power-and-wiring.md)**
 
 ## Audio and Sound-Reactive Summary
 
-- **Inputs:** I2S microphone (INMP441/SPH0645), RCA via ADC1 (GPIO 32-39), I2S ADC DMA mode.
+- **Inputs:** I2S microphone (INMP441/SPH0645/ICS-43432; ICS-43434 is EOL), RCA via ADC1 (GPIO 32-39), PCM1808 I2S ADC, I2S ADC DMA mode.
 - **FFT:** Use ESP-DSP on ESP32 (10-17x faster than arduinoFFT). 1024-pt at 44100 Hz.
 - **Band mapping:** Bass (20-250 Hz) -> R, Mids (250-2k Hz) -> G, Highs (2k-16k Hz) -> B.
 - **Beat detection:** Energy ratio in bass band vs sliding window average.
+- **BPM tracking:** Derive BPM from beat intervals, exponential moving average for stability, beat prediction.
+- **Beat quantization:** Snap RF remote triggers to nearest beat boundary for musical synchronization.
 
 -> Full audio setup, DMA config, ESP-DSP API, beat detection, band mapping: **[docs/audio-reactive.md](docs/audio-reactive.md)**
 
@@ -302,11 +310,12 @@ Connectivity        (ESP32 only, no internal lib dependencies)
 - **FreeRTOS:** Pin WiFi/BLE to Core 0, app tasks to Core 1. Use `vTaskDelayUntil()` for periodic tasks.
 - **WiFi:** Event-driven callbacks, exponential backoff reconnection.
 - **BLE:** GATT service (UUID 0xFF00), color (0xFF01), brightness (0xFF02).
+- **433 MHz RF:** RXB6 receiver + rc-switch library. Sonoff RM433R2 remote. EV1527 OTP fixed codes, learnable by receiver; not rolling/encrypted.
 - **Storage:** NVS (`Preferences.h`) for settings, LittleFS for files/web UI.
 - **I2C:** External pull-ups required (4.7k @ 100 kHz, 2.2k @ 400 kHz). Mutex for thread safety.
 - **Partition table:** OTA requires dual app slots (see partitions.csv example in docs).
 
--> Full FreeRTOS patterns, WiFi/BLE/mDNS, NVS/LittleFS, I2C, OTA, RAM budget: **[docs/esp32-internals.md](docs/esp32-internals.md)**
+-> Full FreeRTOS patterns, WiFi/BLE/mDNS, 433 MHz RF, NVS/LittleFS, I2C, OTA, RAM budget: **[docs/esp32-internals.md](docs/esp32-internals.md)**
 
 ## Pin Reference Summary
 
@@ -320,9 +329,9 @@ Connectivity        (ESP32 only, no internal lib dependencies)
 
 ## Project Roadmap Summary
 
-- **Planned upgrades:** NeoPixelBus, NimBLE-Arduino, ESPAsyncWebServer, ESP-DSP, I2S ADC DMA.
+- **Planned upgrades:** NimBLE-Arduino, ESPAsyncWebServer, ESP-DSP, I2S ADC DMA. ~~NeoPixelBus (done)~~.
 - **Planned libraries:** AudioInput, InputManager, PowerManager.
-- **Known fixes:** LEDPWM 12-bit upgrade, scaleBrightness fix, configurable white extraction, WiFiManager async migration.
+- **Known fixes:** ~~LEDPWM 12-bit upgrade (done)~~, scaleBrightness fix, configurable white extraction, WiFiManager async migration.
 
 -> Full upgrade details, migration guides, known improvements: **[docs/project-roadmap.md](docs/project-roadmap.md)**
 
@@ -330,10 +339,10 @@ Connectivity        (ESP32 only, no internal lib dependencies)
 
 | Document | Contents |
 |----------|----------|
-| [docs/led-control.md](docs/led-control.md) | Color model, SK6812/WS2815B specs and timing, level shifting, signal conditioning, RMT channels, PWM/MOSFET, gamma correction |
-| [docs/power-and-wiring.md](docs/power-and-wiring.md) | Power budget, injection patterns, wire gauge, connectors, brownout, MOSFET wiring, switches/buttons |
-| [docs/audio-reactive.md](docs/audio-reactive.md) | I2S/I2C mics, RCA input, ADC calibration, DMA sampling, ESP-DSP FFT, band mapping, beat detection |
-| [docs/esp32-internals.md](docs/esp32-internals.md) | FreeRTOS tasks/queues/ISR, WiFi/BLE/mDNS, NVS/LittleFS/partitions, I2C, OTA, RAM budget |
+| [docs/led-control.md](docs/led-control.md) | Color model, SK6812/WS2815B specs and timing, 24V non-addressable strips, level shifting, signal conditioning, RMT channels, PWM/MOSFET, gamma correction |
+| [docs/power-and-wiring.md](docs/power-and-wiring.md) | Power budget, injection patterns, wire gauge, connectors, brownout, MOSFET wiring, multi-zone architecture, buck converters, switches/buttons |
+| [docs/audio-reactive.md](docs/audio-reactive.md) | I2S mics (INMP441/SPH0645/ICS-43432), RCA input, PCM1808 I2S ADC, ADC calibration, DMA sampling, ESP-DSP FFT, band mapping, beat detection, BPM tracking, beat quantization |
+| [docs/esp32-internals.md](docs/esp32-internals.md) | FreeRTOS tasks/queues/ISR, WiFi/BLE/mDNS, 433 MHz RF remote, NVS/LittleFS/partitions, I2C, OTA, RAM budget |
 | [docs/build-and-tooling.md](docs/build-and-tooling.md) | PlatformIO config, build flags, target platforms, testing with Unity, filesystem, CI tips |
 | [docs/coding-standards.md](docs/coding-standards.md) | C++ standards, naming conventions, strings, error handling, memory management, platform abstraction, logging |
 | [docs/pin-reference.md](docs/pin-reference.md) | GPIO safety, boot strapping pins, ADC channels, safe pin assignments, module variants |
