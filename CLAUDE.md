@@ -124,6 +124,38 @@ REQUIRED instead:
 - If the same approach failed, ask user for a different strategy.
 - Do not retry the same failing command more than 2 times without changing approach.
 
+### Clangd / IDE Diagnostic Rules
+
+**NEVER dismiss diagnostics as "false positives" without investigation.**
+
+When clangd or any IDE diagnostic appears during editing:
+
+1. **Investigate first.** Read the actual warning. Determine if it's a real code issue or a tooling issue.
+2. **Fix code issues immediately.** Common real issues that look like false positives:
+   - `%lu` / `%u` format mismatches with `uint32_t` — use `PRIu32` from `<inttypes.h>` (portable across host and target).
+   - Signed/unsigned comparison warnings — fix the types.
+   - Unused variable/parameter warnings — fix or `(void)var`.
+3. **Fix tooling issues at the source.** If clangd can't resolve Arduino/ESP-IDF symbols:
+   - Check `.clangd` `Remove:` list for gcc/xtensa flags clang doesn't understand.
+   - Check `compile_commands.json` exists and is current (`pio run` regenerates it).
+   - For full cross-compiler support, editor must pass `--query-driver=**/xtensa-*-elf-*` to clangd (see `.clangd` file comments).
+   - Do NOT just ignore and move on.
+4. **Report what you found.** Tell the user: "Diagnostic X is caused by Y. Fixed by Z." or "Diagnostic X is a known clangd limitation with cross-compilation — here's the `.clangd` fix."
+
+**FORBIDDEN:** Saying "these are false positives from clangd" and moving on without fixing anything.
+
+**Portable printf for fixed-width types (ESP32 code):**
+
+| Type | Format macro | Header |
+|------|-------------|--------|
+| `uint8_t` | `PRIu8` | `<inttypes.h>` |
+| `uint16_t` | `PRIu16` | `<inttypes.h>` |
+| `uint32_t` | `PRIu32` | `<inttypes.h>` |
+| `int32_t` | `PRId32` | `<inttypes.h>` |
+| `size_t` | `%zu` | (built-in) |
+
+Example: `ESP_LOGI(TAG, "Rate: %" PRIu32 " Hz", sampleRate);`
+
 ### Build Verification Workflow
 
 **Run build commands once, capture output, check exit code:**
@@ -162,6 +194,7 @@ pio test -e native 2>&1 > /tmp/test.log; EC=$?; echo "Exit code: $EC"; head -80 
 | **File Paths**   | Guess or assume paths for commands                   | Verify with `ls` first, then run command             |
 | **Docs**         | Multiple docs on same topic                          | ONE doc, update it                                   |
 | **Upload**       | Upload to device without asking                      | ASK user first                                       |
+| **Diagnostics**  | Dismiss as "false positives" without investigation   | Investigate, fix code or tooling, report findings    |
 
 ---
 
@@ -334,8 +367,8 @@ Connectivity        (ESP32 only, no internal lib dependencies)
 
 ## Project Roadmap Summary
 
-- **Planned upgrades:** NimBLE-Arduino, ESPAsyncWebServer, ESP-DSP, I2S ADC DMA. ~~NeoPixelBus (done)~~.
-- **Planned libraries:** AudioInput, InputManager, PowerManager.
+- **Planned upgrades:** NimBLE-Arduino, ESPAsyncWebServer. ~~NeoPixelBus (done)~~. ~~ESP-DSP (done)~~. ~~I2S ADC DMA (done)~~.
+- **Planned libraries:** ~~AudioInput (done)~~, InputManager, PowerManager.
 - **Known fixes:** ~~LEDPWM 12-bit upgrade (done)~~, scaleBrightness fix, configurable white extraction, WiFiManager async migration.
 
 -> Full upgrade details, migration guides, known improvements: **[docs/project-roadmap.md](docs/project-roadmap.md)**

@@ -182,6 +182,89 @@ Long LED strips are effectively antennas. The 800 kHz data signal and its harmon
 - Use ferrite cores on the data line and power cables near the controller if you experience radio interference.
 - Keep strip data/power wires at least 5-10 cm away from the ESP32's WiFi antenna area.
 
+## LED Panel / Matrix Mapping
+
+When addressable strips are arranged in a 2D grid (panel), a mapping function converts `(x, y)` coordinates to a linear pixel index. The `led-panel` app provides `mapXY()` with compile-time selectable wiring patterns.
+
+### Coordinate Convention
+
+- `(0, 0)` is **top-left**.
+- `x` increases rightward (0 to `PANEL_WIDTH - 1`).
+- `y` increases downward (0 to `PANEL_HEIGHT - 1`).
+
+### Wiring Patterns
+
+Select at compile time via `#define WIRING_PATTERN` in `config.h`:
+
+**Pattern 0: Serpentine Horizontal** (default, most common for panels)
+
+```
+Row 0 (y=0): → → → → → →   (left to right)
+Row 1 (y=1): ← ← ← ← ← ←   (right to left)
+Row 2 (y=2): → → → → → →   (left to right)
+...
+```
+
+Even rows: `index = y * width + x`. Odd rows: `index = y * width + (width - 1 - x)`.
+
+**Pattern 1: Progressive Horizontal** (all rows left-to-right)
+
+```
+Row 0 (y=0): → → → → → →
+Row 1 (y=1): → → → → → →
+Row 2 (y=2): → → → → → →
+...
+```
+
+All rows: `index = y * width + x`. Requires a physical wire jump between the end of each row and the start of the next.
+
+**Pattern 2: Serpentine Vertical** (columns snake top-to-bottom)
+
+```
+Col 0: ↓    Col 1: ↑    Col 2: ↓
+       ↓           ↑           ↓
+       ↓           ↑           ↓
+```
+
+Even columns: `index = x * height + y`. Odd columns: `index = x * height + (height - 1 - y)`.
+
+### Out-of-Bounds Sentinel
+
+`mapXY()` returns `NUM_PIXELS` (one past the last valid index) for out-of-bounds coordinates. This sentinel value is guaranteed to be an invalid index, so callers can check:
+
+```cpp
+uint16_t idx = mapXY(x, y);
+if (idx < NUM_PIXELS) {
+    buffer[idx] = color;
+}
+```
+
+A `setPixelXY()` helper that wraps this check is recommended for effect code — it silently no-ops on invalid coordinates, which simplifies effects that compute coordinates near panel edges:
+
+```cpp
+inline void setPixelXY(RGBW* buffer, uint16_t numPixels,
+                       uint16_t x, uint16_t y, const RGBW& color) {
+    uint16_t idx = mapXY(x, y);
+    if (idx < numPixels) {
+        buffer[idx] = color;
+    }
+}
+```
+
+### Testing Wiring Patterns
+
+The matrix mapping is pure logic (no hardware dependency) and can be tested on the host with the `native` environment. Create separate native test environments for each wiring pattern:
+
+```bash
+# Test default serpentine-H
+pio test -e native --filter test_matrix
+
+# Test with alternate patterns (requires native-* envs in platformio.ini)
+pio test -e native-serpentine-v --filter test_matrix
+```
+
+See [build-and-tooling.md](build-and-tooling.md#testing-configuration-variants) for the `platformio.ini` setup for configuration-variant testing.
+
 ## 24V Non-Addressable Strips (COB / SMD)
 
 Non-addressable strips have no data line — brightness and color are controlled entirely by PWM via MOSFETs (the `LEDPWM` library). Each color channel is a continuous circuit switched by its own MOSFET.

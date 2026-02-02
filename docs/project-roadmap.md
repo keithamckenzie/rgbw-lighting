@@ -11,8 +11,8 @@ The default ESP32 BLE stack should be upgraded for production firmware:
 | ~~Adafruit NeoPixel~~ | ~~**NeoPixelBus**~~ | ~~Native `RgbColor`/`RgbwColor` types, selectable RMT/I2S/DMA drivers, built-in gamma correction, explicit SK6812/WS2815 method classes~~ | **Done** — `LEDStrip` now uses NeoPixelBus with template-based `LEDStrip<StripType>` API |
 | ESP32 BLE stack | **NimBLE-Arduino** | Reported testing shows ~50% less flash and ~100 KB less RAM vs Bluedroid; aims for API compatibility | Planned |
 | WebServer (sync) | **ESPAsyncWebServer** + WebSocket | Non-blocking, low-latency real-time color control |
-| analogRead polling | **I2S ADC DMA mode** | Continuous audio sampling without CPU blocking |
-| arduinoFFT | **ESP-DSP** (ESP32 only) | Xtensa SIMD-accelerated FFT; keep arduinoFFT for AVR/host tests |
+| ~~analogRead polling~~ | ~~**I2S ADC DMA mode**~~ | ~~Continuous audio sampling without CPU blocking~~ | **Done** — `AudioInput` library uses I2S DMA with configurable buffer sizing |
+| ~~arduinoFFT~~ | ~~**ESP-DSP**~~ (ESP32 only) | ~~Xtensa SIMD-accelerated FFT; keep arduinoFFT for AVR/host tests~~ | **Done** — `AudioInput` uses `dsps_fft2r_fc32` from ESP-DSP |
 
 ### NeoPixelBus Migration (Completed)
 
@@ -103,26 +103,45 @@ Benefits:
 
 | Library | Purpose | Platform | Status |
 |---------|---------|----------|--------|
-| `AudioInput` | I2S mic + RCA ADC, FFT, beat detection, band analysis | ESP32 | Planned |
+| `AudioInput` | I2S mic + I2S ADC (PCM1808), ESP-DSP FFT, 8-band analysis, beat/BPM tracking | ESP32 | **Done** |
 | `InputManager` | Debounced buttons, rotary encoders, switch matrices | All | Planned |
 | `PowerManager` | Current limiting, power budget enforcement | All | Planned |
 
-### AudioInput Library Design
+### AudioInput Library (Completed)
 
-Planned API:
+The `AudioInput` library is implemented in `shared/lib/AudioInput/`. It runs a dedicated FreeRTOS task that handles I2S DMA capture, DC blocking, ESP-DSP FFT, 8 octave-spaced band extraction, beat detection, and BPM tracking. Results are published via a latest-wins queue.
+
 ```cpp
-AudioInput audio;
-audio.begin(AudioInput::I2S_MIC, PIN_BCK, PIN_WS, PIN_DIN);
-// or
-audio.begin(AudioInput::ADC_RCA, PIN_ADC);
+#include "audio_input.h"
 
-// In task loop
-AudioSpectrum spectrum = audio.getSpectrum();
-float bassEnergy = spectrum.bandEnergy(20, 250);
-float midEnergy = spectrum.bandEnergy(250, 2000);
-float highEnergy = spectrum.bandEnergy(2000, 16000);
-bool beatDetected = audio.isBeat();
+// Configure for I2S microphone (INMP441, ICS-43432, SPH0645)
+AudioInputConfig cfg = audioInputDefaultConfig(AudioInputMode::I2S_MIC);
+cfg.pinSCK  = 26;
+cfg.pinWS   = 25;
+cfg.pinSD   = 33;
+cfg.beatThreshold  = 1.5f;
+cfg.beatCooldownMs = 200;
+
+// Or for external I2S ADC (PCM1808) — requires MCLK
+AudioInputConfig cfg = audioInputDefaultConfig(AudioInputMode::I2S_ADC);
+cfg.pinMCLK = 3;  // Must override default (GPIO 0 is a strapping pin)
+
+AudioInput audio;
+AudioInputError err = audio.begin(cfg);  // Launches FreeRTOS task
+
+// Non-blocking poll in main loop
+AudioSpectrum spectrum;
+if (audio.getSpectrum(spectrum)) {
+    float bass  = spectrum.bandEnergy[0];  // Pre-smoothed, 0.0-1.0
+    bool beat   = spectrum.beatDetected;
+    float phase = spectrum.beatPhase;      // 0.0-1.0 within beat
+    float bpm   = spectrum.bpm;            // EMA-smoothed
+}
+
+audio.end();  // Graceful shutdown (stops I2S, waits for task exit)
 ```
+
+See [audio-reactive.md](audio-reactive.md#audioinput-library-pipeline) for full pipeline documentation.
 
 ### InputManager Library Design
 

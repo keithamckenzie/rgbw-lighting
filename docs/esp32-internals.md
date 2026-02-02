@@ -81,6 +81,50 @@ Unsubscribe before long-blocking operations (OTA, large flash writes).
 
 **Common pitfall:** The idle task on Core 0 feeds the task watchdog. If you run a continuous task on Core 0 at priority >= 1 without ever yielding, the watchdog triggers. Always include a `vTaskDelay` or blocking call in every task loop.
 
+### Task Teardown and Error Handling
+
+Stopping a FreeRTOS task that uses I2S or other blocking drivers requires care. A task blocked inside `i2s_read()` will not respond to a simple flag change.
+
+**Teardown sequence:**
+
+1. **Stop the peripheral first.** Call `i2s_stop()` / `i2s_driver_uninstall()` before killing the task. This unblocks any pending `i2s_read()` call (it returns with an error or zero bytes).
+2. **Signal the task to exit.** Set a `volatile bool running = false` flag that the task checks each iteration.
+3. **Wait for the task to acknowledge.** Use a binary semaphore (`xSemaphoreGive` from the task just before it returns, `xSemaphoreTake` with a timeout from the caller). Do not call `vTaskDelete()` from outside without confirmation — the task may be mid-write to shared state.
+4. **Clean up resources** (free buffers, delete queue, delete semaphore) only after the task has exited.
+
+```cpp
+// Task side
+void audioTaskFunc(void* param) {
+    Impl* impl = (Impl*)param;
+    while (impl->running) {
+        size_t bytesRead = 0;
+        esp_err_t err = i2s_read(I2S_NUM_0, buf, bufSize, &bytesRead, pdMS_TO_TICKS(200));
+        if (err != ESP_OK || bytesRead == 0) {
+            vTaskDelay(pdMS_TO_TICKS(10));  // Backoff on failure — avoids pegging the core
+            continue;
+        }
+        // ... process audio ...
+    }
+    xSemaphoreGive(impl->taskExitSem);  // Signal clean exit
+    vTaskDelete(NULL);
+}
+
+// Teardown side
+void stopAudioTask(Impl* impl) {
+    impl->running = false;
+    i2s_stop(I2S_NUM_0);
+    i2s_driver_uninstall(I2S_NUM_0);
+    // Wait for task to exit (1 second timeout)
+    xSemaphoreTake(impl->taskExitSem, pdMS_TO_TICKS(1000));
+    // Now safe to free buffers, delete queue, etc.
+}
+```
+
+**Key points:**
+- **Backoff on read failures.** If `i2s_read()` fails or returns 0 bytes, add a short `vTaskDelay(pdMS_TO_TICKS(10))` before retrying. Without this, the task will spin at maximum priority and starve other tasks on the same core.
+- **Timeout on `i2s_read()`.** Use a bounded timeout (e.g., 200 ms) instead of `portMAX_DELAY`. This ensures the task re-checks the `running` flag periodically even if I2S stalls.
+- **Never call `vTaskDelete(taskHandle)` from outside** on a task that holds resources. The task may be in the middle of writing to a queue or holding a mutex.
+
 ### Common FreeRTOS Pitfalls
 
 - **Priority inversion:** Use `xSemaphoreCreateMutex()` (not binary semaphore) for priority inheritance.

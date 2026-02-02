@@ -58,10 +58,16 @@ Quick rules for agents working in this repo. Keep these aligned with CLAUDE.md.
 - Quarter-wave antenna: 17.3 cm straight wire on the ANT pad.
 
 ## Audio input
-- I2S mics: INMP441, SPH0645, ICS-43432. (ICS-43434 is EOL; ICS-43432 is the current replacement.)
+- The `AudioInput` shared library (`shared/lib/AudioInput/`) handles the full capture and analysis pipeline: I2S DMA, DC blocker, ESP-DSP FFT, 8 octave-spaced bands, beat/BPM tracking, and beat-phase prediction. See `docs/audio-reactive.md` for pipeline details.
+- I2S mics: INMP441, SPH0645, ICS-43432. (ICS-43434 is EOL; ICS-43432 is the current replacement.) Mode: `I2S_MIC` — mono, no MCLK needed.
+- External I2S ADC (PCM1808): mode `I2S_ADC` — requires MCLK and reads stereo frames (library deinterleaves left channel). **`pinMCLK` defaults to GPIO 0 in config but must be overridden** — GPIO 0 is a boot strapping pin. Dual supply: 5V analog + 3.3V digital. Do not connect speaker-level outputs.
 - Analog mic (MAX4466/MAX9814): simpler wiring but lower quality than I2S; adequate for basic beat detection only.
-- Line-in: RCA via ADC1 (GPIO 32-39) with bias circuit, or PCM1808 external I2S ADC for higher fidelity (99 dB dynamic range, dual supply: 5V analog + 3.3V digital). Do not connect speaker-level outputs to PCM1808.
-- Beat detection uses energy ratio in bass band vs sliding window. BPM tracking and beat quantization are documented in `docs/audio-reactive.md`.
+- Line-in: RCA via ADC1 (GPIO 32-39) with bias circuit; for higher fidelity use PCM1808 (99 dB dynamic range).
+
+### Sampling constraints
+- **Nyquist:** `sampleRate >= 2 * highest frequency of interest`. Default 8-band mapping tops out at ~11025 Hz, so sampleRate must be >= 22050 Hz.
+- **FFT size:** Must be a power of two, >= 64. Default: 1024.
+- **Band-bin guard:** The library uses floor/ceil for bin boundaries and ensures every band spans >= 1 bin. At low sample rates or small FFT sizes, verify that high-frequency bands don't collapse.
 
 ## Persistent storage (ESP32)
 - Use `Preferences.h` (NVS) for small settings; LittleFS for files. SPIFFS is deprecated.

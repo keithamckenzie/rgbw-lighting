@@ -105,6 +105,19 @@ The PCM1808 requires a master clock (SCK) at 256x, 384x, or 512x the sample rate
 - **PCM1808:** When audio fidelity matters (full-spectrum analysis, precise BPM tracking, multi-band visualization). The 99 dB dynamic range vastly exceeds the ESP32's ~50 dB effective ADC performance.
 - **Built-in ADC:** Adequate for simple beat detection (bass only) where the ESP32's ADC noise floor is acceptable. Simpler wiring, no extra hardware.
 
+### I2S Mode Differences: Mic vs External ADC
+
+The `AudioInput` library supports two I2S modes with different wiring and data format requirements:
+
+| Parameter | `I2S_MIC` (INMP441, SPH0645, ICS-43432) | `I2S_ADC` (PCM1808, external I2S ADC) |
+|-----------|------------------------------------------|----------------------------------------|
+| **MCLK** | Not required (mic generates its own clock from BCLK) | **Required** — PCM1808 needs a master clock at 256×/384×/512× sample rate |
+| **Channel format** | Mono (left or right depending on L/R pin) | Stereo (interleaved L/R frames) |
+| **Data path** | `i2s_read()` → mono samples directly | `i2s_read()` → stereo `[L, R, L, R, ...]` → deinterleave left channel |
+| **`pinMCLK`** | Ignored (set to -1 or 0) | Must be a valid GPIO. Default is 0 in config but **must be overridden** for real hardware — GPIO 0 is a boot strapping pin |
+
+When using `I2S_ADC` mode, the driver reads stereo frames (2× the sample count) into a dedicated interleave buffer, then extracts the left channel for FFT processing. This doubles the DMA read size but the deinterleaving is a fast memcpy-style loop.
+
 ### ADC Accuracy and Calibration (ESP32)
 
 - ESP32 ADC reference voltage varies between chips (roughly 1000-1200 mV). Use the ESP-IDF ADC calibration driver to convert raw readings to calibrated millivolts (e.g., `adc_cali_raw_to_voltage()`) when amplitude accuracy matters.
@@ -215,6 +228,14 @@ The `& 0x0FFF` mask extracts the 12-bit ADC sample. The ESP32 ADC is 12-bit (0-4
 | 48000 Hz | 24000 Hz | ~46.9 Hz/bin | Matches some audio interfaces |
 
 For LED sound-reactive lighting, 22050 Hz is often sufficient since LED response above 10 kHz is rarely perceptible. It halves DMA bandwidth and FFT computation.
+
+### Sampling and FFT Constraints
+
+These constraints are enforced at initialization by the `AudioInput` library:
+
+- **Nyquist:** `sampleRate >= 2 * highest frequency of interest`. For the default 8-band mapping (top band ~11025 Hz), `sampleRate` must be >= 22050 Hz. At 44100 Hz the top band resolves cleanly; at 22050 Hz it lands exactly on the Nyquist limit.
+- **FFT size:** Must be a power of two and >= 64. Common values: 256 (fast, coarse), 512, 1024 (default, good balance), 2048 (high resolution, more latency).
+- **Band-bin computation:** Bin index for a frequency `f` is `f / (sampleRate / fftSize)`. The library uses `floor()` for the start bin and `ceil()` for the end bin of each band, with a guard ensuring every band spans at least 1 bin. At low sample rates or small FFT sizes, high-frequency bands can collapse to zero bins without this guard.
 
 ## FFT Processing
 
@@ -530,29 +551,89 @@ uint32_t quantizeToNextBeat(uint32_t triggerTime) {
 
 For multi-zone systems, quantize all zone transitions to the same beat boundary so they appear synchronized.
 
-## Task Architecture for Audio-Reactive System
+## AudioInput Library Pipeline
+
+The `AudioInput` shared library (`shared/lib/AudioInput/`) encapsulates the full audio capture and analysis pipeline. It runs a dedicated FreeRTOS task and exposes results via a non-blocking latest-wins queue.
+
+### API Overview
+
+```cpp
+#include "audio_input.h"
+
+// Get default config for I2S microphone
+AudioInputConfig cfg = audioInputDefaultConfig(AudioInputMode::I2S_MIC);
+cfg.pinSCK  = 26;
+cfg.pinWS   = 25;
+cfg.pinSD   = 33;
+cfg.beatThreshold = 1.5f;
+
+AudioInput audio;
+AudioInputError err = audio.begin(cfg);
+
+// In your main loop or LED task — non-blocking poll
+AudioSpectrum spectrum;
+if (audio.getSpectrum(spectrum)) {
+    float bass = spectrum.bandEnergy[0];
+    bool beat  = spectrum.beatDetected;
+    float phase = spectrum.beatPhase;  // 0.0-1.0
+}
+```
+
+`AudioSpectrum` contains:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `bandEnergy[8]` | `float[8]` | Per-band energy, 0.0-1.0, asymmetric EMA smoothed |
+| `rmsEnergy` | `float` | Overall RMS energy, 0.0-1.0 |
+| `beatDetected` | `bool` | True for one frame on detected beat |
+| `bpm` | `float` | Smoothed BPM estimate (EMA) |
+| `beatPhase` | `float` | 0.0-1.0 position within current beat period |
+| `nextBeatMs` | `uint32_t` | Predicted `millis()` timestamp of next beat |
+| `timestampMs` | `uint32_t` | When this spectrum was computed |
+
+### Internal Pipeline (FreeRTOS Task)
+
+The audio task runs on a configurable core (default Core 1, priority 4, 8192 stack). Each iteration:
 
 ```
-Audio Task (Core 1, priority 4, 8192 stack):
-    while (true) {
-        i2s_read(...)          // Block until DMA buffer ready
-        applyWindow(samples)   // Hann window
-        runFFT(samples)        // ESP-DSP, ~250 us
-        computeBands(magnitudes, bands)
-        detectBeat(bassEnergy)
-        xQueueOverwrite(spectrumQueue, &spectrum)  // Latest wins
+Audio Task:
+    while (running) {
+        1. i2s_read(...)                    // Block until DMA buffer ready (200ms timeout)
+           - I2S_MIC:  mono → rawSamples[]
+           - I2S_ADC:  stereo → deinterleave left channel → rawSamples[]
+        2. DC blocker (IIR high-pass, alpha=0.995)
+           - int32_t → float (24-bit normalization)
+           - Compute RMS energy
+        3. Apply Hann window
+        4. ESP-DSP FFT (in-place, radix-2) + bit-reversal
+        5. Compute magnitudes for bins 0..fftSize/2
+        6. Extract 8 octave-spaced band energies
+           - Asymmetric EMA: fast attack (0.3), slow decay (0.05)
+        7. Beat detection (bass bands vs sliding window average)
+        8. BPM tracking (EMA on beat intervals)
+        9. Compute beatPhase (0.0-1.0) and nextBeatMs
+       10. xQueueOverwrite(spectrumQueue, &spectrum)   // Latest wins
     }
 
-LED Task (Core 1, priority 3, 4096 stack):
-    while (true) {
-        AudioSpectrum spectrum;
-        if (xQueueReceive(spectrumQueue, &spectrum, 0) == pdTRUE) {
-            mapSpectrumToColors(spectrum, pixels)
-        }
-        strip.show()
-        vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(16))  // ~60 FPS
+Main loop / LED task:
+    AudioSpectrum spectrum;
+    if (audio.getSpectrum(spectrum)) {       // Non-blocking peek
+        // Check staleness: if timestampMs is old, zero transients
+        mapSpectrumToColors(spectrum, pixels);
     }
+    strip.show();
 ```
+
+### Stale-Data Zeroing
+
+The consumer side (app code) should check `spectrum.timestampMs` against the current time. If the audio task has died or is blocked, the last spectrum in the queue goes stale. The `led-panel` app zeros all transient fields (energy, beat, BPM, phase) when data is older than 500 ms, preventing stuck beat flashes or frozen energy levels.
+
+### Latest-Wins Queue
+
+The spectrum queue has depth 1 and uses `xQueueOverwrite()`. This means:
+- The producer never blocks (always succeeds).
+- The consumer always gets the most recent data.
+- If the consumer is slower than the producer, intermediate frames are silently dropped. This is the correct behavior for real-time visualization — displaying stale intermediate frames would add latency.
 
 ### RAM Budget for Audio System
 

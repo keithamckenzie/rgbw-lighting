@@ -79,6 +79,58 @@ Benefits:
 - No implicit conversion to `int` (catches bugs)
 - Namespace isolation (no name collisions)
 
+### Enum Stability Across Feature Flags
+
+Enum values that are stored in NVS, sent over BLE, or used as array indices **must remain stable** regardless of compile-time feature flags. Never use `#if` to remove enum entries — this shifts the numeric values of all subsequent entries and breaks stored settings or protocol compatibility.
+
+```cpp
+// BAD: removing an entry shifts all values below it
+enum class EffectMode : uint8_t {
+    Solid = 0,
+    Rainbow,
+#if AUDIO_ENABLED
+    SoundReactive,   // Without AUDIO_ENABLED, Twinkle becomes 2 instead of 3
+#endif
+    Twinkle,
+    COUNT
+};
+
+// GOOD: keep all entries, skip unavailable ones at runtime
+enum class EffectMode : uint8_t {
+    Solid = 0,
+    Rainbow,
+    SoundReactive,   // Always present — stub/skip at runtime if audio disabled
+    Twinkle,
+    COUNT
+};
+```
+
+When an effect or feature is compiled out, its enum entry stays but the runtime behavior becomes a no-op or falls through to a default. Name tables should reflect the disabled state (e.g., `"SoundReactive (off)"`) so debug output is clear.
+
+### Config Safety and Compile-Time Guards
+
+Use `static_assert` and compile-time checks to catch invalid configuration early:
+
+```cpp
+// Guard against invalid config values
+static_assert(FFT_SIZE >= 64, "FFT_SIZE must be >= 64");
+static_assert((FFT_SIZE & (FFT_SIZE - 1)) == 0, "FFT_SIZE must be a power of two");
+static_assert(SAMPLE_RATE >= 2 * 11025, "SAMPLE_RATE must satisfy Nyquist for top band");
+
+// Keep cross-module constants in sync
+static_assert(AUDIO_NUM_BANDS == AUDIO_INPUT_NUM_BANDS,
+              "App band count must match AudioInput library band count");
+```
+
+**Don't ban legitimate edge cases.** A 1×N or N×1 panel is a valid configuration (it's just a strip). Guards should catch genuinely invalid values (zero dimensions, negative sizes) without rejecting unusual-but-working setups.
+
+**Guard divisors inside effects.** Any effect that divides by `PANEL_WIDTH`, `PANEL_HEIGHT`, or band count must handle the case where the divisor could be small:
+
+```cpp
+uint16_t colsPerBand = PANEL_WIDTH / AUDIO_NUM_BANDS;
+if (colsPerBand < 1) colsPerBand = 1;  // Protect against narrow panels
+```
+
 ## Header Files
 
 - Use `#pragma once` (already established).

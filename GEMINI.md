@@ -12,11 +12,17 @@ rgbw-lighting/
     example-rgbw/               # Template app (copy to create new apps)
       platformio.ini
       src/main.cpp
+    led-panel/                  # 24x36 RGBW panel (ESP32 + ESP8266)
+      platformio.ini
+      src/
+      test/
   shared/lib/                   # Shared libraries (linked via lib_extra_dirs)
     RGBWCommon/                 # Core RGBW/HSV types, color math, utilities
     LEDStrip/                   # Addressable strip driver (SK6812 RGBW, WS2815B RGB)
     LEDPWM/                     # PWM channel driver (MOSFET-controlled RGBW)
+    AudioInput/                 # I2S audio capture, ESP-DSP FFT, beat/BPM tracking (ESP32 only)
     Connectivity/               # WiFi and BLE managers (ESP32 only)
+  docs/                         # Technical reference documentation
   .gitignore
   README.md
 ```
@@ -33,6 +39,7 @@ rgbw-lighting/
 RGBWCommon          (no dependencies -- foundation library)
   <- LEDStrip       (depends on RGBWCommon)
   <- LEDPWM         (depends on RGBWCommon)
+AudioInput          (ESP32 only, depends on ESP-DSP; no internal lib dependencies)
 Connectivity        (ESP32 only, no internal lib dependencies)
 ```
 
@@ -281,23 +288,51 @@ Human vision perceives brightness logarithmically. Apply gamma correction for pe
 
 ## Audio Input and Sound-Reactive Lighting
 
-### I2S Microphones (INMP441, SPH0645)
+The `AudioInput` shared library (`shared/lib/AudioInput/`) handles the full audio pipeline: I2S DMA capture, DC blocking, ESP-DSP FFT, 8 octave-spaced band extraction with asymmetric smoothing, beat detection, BPM tracking, and beat-phase prediction. Results are published via a latest-wins FreeRTOS queue.
 
-- Connect via I2S interface.
-- Sample at 44100 Hz for full audio spectrum.
-- I2S provides 24-bit samples in DMA buffers without CPU blocking.
+```cpp
+#include "audio_input.h"
+
+AudioInputConfig cfg = audioInputDefaultConfig(AudioInputMode::I2S_MIC);
+cfg.pinSCK = 26; cfg.pinWS = 25; cfg.pinSD = 33;
+
+AudioInput audio;
+audio.begin(cfg);  // Launches FreeRTOS task
+
+AudioSpectrum spectrum;
+if (audio.getSpectrum(spectrum)) {
+    // spectrum.bandEnergy[0..7], spectrum.beatDetected, spectrum.beatPhase, spectrum.bpm
+}
+```
+
+### I2S Microphones (INMP441, SPH0645, ICS-43432)
+
+- Connect via I2S interface. Mode: `AudioInputMode::I2S_MIC` (mono, no MCLK needed).
+- ICS-43432 is the current-production TDK part; ICS-43434 is EOL.
+- Sample at 44100 Hz for full audio spectrum or 22050 Hz for bass/mid only.
+
+### External I2S ADC (PCM1808)
+
+- Mode: `AudioInputMode::I2S_ADC` — reads stereo frames, library deinterleaves left channel.
+- **Requires MCLK.** `pinMCLK` defaults to GPIO 0 in config but **must be overridden** — GPIO 0 is a boot strapping pin.
+- 99 dB dynamic range, dual supply: 5V analog + 3.3V digital. Do not connect speaker-level outputs.
 
 ### RCA Audio Input (Line-Level)
 
 - **Use ADC1 pins only** (GPIO 32-39).
-- Bias signal to Vcc/2 (1.65V).
-- Use **I2S ADC Mode** for continuous DMA sampling (avoids CPU blocking of `analogRead`).
+- Bias signal to Vcc/2 (1.65V) with resistive divider + DC blocking capacitor.
+- For higher fidelity, use PCM1808 external ADC instead of the ESP32's built-in ADC.
+
+### Sampling Constraints
+
+- **Nyquist:** `sampleRate >= 2 * highest frequency of interest`. Default 8-band mapping tops out at ~11025 Hz, so >= 22050 Hz.
+- **FFT size:** Must be a power of two, >= 64. Default: 1024.
+- **Band-bin guard:** The library ensures every band spans >= 1 FFT bin via floor/ceil boundaries.
 
 ### FFT Processing
 
-- **Use ESP-DSP:** Espressif's official DSP library uses Xtensa SIMD instructions.
-- Performance: <2ms per FFT vs 10-15ms for generic C implementations.
-- Map frequency bands to RGBW channels.
+- **ESP-DSP** (Espressif's official DSP library): Xtensa SIMD-accelerated, ~250 us for 1024-pt FFT.
+- 8 octave-spaced bands from ~43 Hz to ~11025 Hz with asymmetric EMA smoothing (fast attack, slow decay).
 
 ## Standard Lighting Protocols
 

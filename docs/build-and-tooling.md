@@ -269,6 +269,109 @@ struct MockNeoPixelBus {
 #endif
 ```
 
+## Native Testing Patterns
+
+### Compiling Only Pure Logic
+
+Use `build_src_filter` and `test_build_src_filter` to control which source files compile in the `native` environment. This prevents hardware-dependent app code from being pulled into host tests.
+
+```ini
+[env:native]
+platform = native
+build_flags = -std=c++17 -DUNIT_TEST -DNATIVE_BUILD
+test_framework = unity
+lib_extra_dirs = ../../shared/lib
+lib_ignore = LEDStrip, LEDPWM, Connectivity   ; hardware-dependent libs
+
+; Only compile test files — skip app src/ entirely
+build_src_filter = -<*>
+test_build_src_filter = +<test_*/>
+```
+
+For tests that need specific app source files (e.g., pure-logic modules), include them selectively:
+
+```ini
+; Pull in specific files from src/ for testing
+build_src_filter = -<*> +<effects.cpp> +<matrix.cpp>
+```
+
+### Testing Configuration Variants
+
+When app behavior depends on compile-time `#define` values (e.g., `WIRING_PATTERN`, `STRIP_TYPE`), create additional native environments to test each variant:
+
+```ini
+[env:native-serpentine-h]
+platform = native
+build_flags = -std=c++17 -DUNIT_TEST -DNATIVE_BUILD -DWIRING_PATTERN=0
+test_framework = unity
+lib_extra_dirs = ../../shared/lib
+lib_ignore = LEDStrip, LEDPWM, Connectivity
+build_src_filter = -<*> +<matrix.cpp>
+
+[env:native-serpentine-v]
+extends = env:native-serpentine-h
+build_flags = -std=c++17 -DUNIT_TEST -DNATIVE_BUILD -DWIRING_PATTERN=2
+```
+
+Run a specific variant:
+```bash
+pio test -e native-serpentine-v --filter test_matrix
+```
+
+### What Belongs in Native Tests
+
+- **Color math:** `hsvToRGBW`, `lerpRGBW`, `scaleBrightness`, gamma tables
+- **Matrix mapping:** `mapXY` for all wiring patterns, OOB sentinel behavior
+- **Audio analysis logic:** DC blocker, band energy extraction, beat detection algorithm (with mock FFT data)
+- **Config validation:** Static assertions, boundary checks
+- **State machines:** Effect sequencing, mode transitions
+
+Keep hardware interaction (I2S, GPIO, NeoPixelBus, WiFi) out of native tests entirely — use `lib_ignore` and `#ifdef NATIVE_BUILD` guards.
+
+## Clangd Setup
+
+### Generate `compile_commands.json`
+
+PlatformIO generates `compile_commands.json` during builds. After building any environment, the file appears at `.pio/build/<env>/compile_commands.json`. Point clangd at it via `.clangd`:
+
+```yaml
+# .clangd
+CompileFlags:
+  CompilationDatabase: .pio/build/esp32
+
+  Remove:
+    # Flags clang doesn't understand (GCC/Xtensa-specific)
+    - -mlongcalls
+    - -mtext-section-literals
+    - -fno-tree-switch-conversion
+    - -mfix-esp32-psram-cache-issue
+    - -fstrict-volatile-bitfields
+```
+
+If the database doesn't exist yet, run `pio run -e esp32` to generate it.
+
+### Cross-Compiler Awareness (`--query-driver`)
+
+Clangd needs `--query-driver` to find cross-compiler built-in headers (e.g., Xtensa toolchain). This flag belongs in **editor settings**, not in `.clangd`:
+
+**VS Code** (`.vscode/settings.json`):
+```json
+{
+    "clangd.arguments": [
+        "--query-driver=**/xtensa-*-elf-*,**/xtensa-*-elf-*"
+    ]
+}
+```
+
+**Neovim** (lspconfig):
+```lua
+require('lspconfig').clangd.setup({
+    cmd = { 'clangd', '--query-driver=**/xtensa-*-elf-*' },
+})
+```
+
+The reason `--query-driver` belongs in editor config rather than `.clangd` is that `.clangd` doesn't support the `--query-driver` flag — it's a clangd command-line argument, not a compilation database directive.
+
 ## Filesystem (LittleFS)
 
 ### Building and Uploading
