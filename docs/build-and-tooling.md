@@ -24,12 +24,13 @@ Or invoke without activating: `.venv/bin/pio run`
 
 ### Target Platforms
 
-| Environment    | Platform      | Board      | C++ Standard | MCU |
-|---------------|---------------|------------|-------------|-----|
-| `esp32`       | espressif32   | esp32dev   | gnu++17     | ESP32 (Xtensa LX6, dual-core, 240 MHz) |
-| `esp32-release` | espressif32 | esp32dev   | gnu++17     | Same, optimized for size (-Os) |
-| `arduino-uno` | atmelavr      | uno        | gnu++11     | ATmega328P (8-bit, 16 MHz) |
-| `native`      | native        | —          | c++17       | Host machine (for unit tests) |
+| Environment    | Platform      | Board       | C++ Standard | MCU |
+|---------------|---------------|-------------|-------------|-----|
+| `esp32`       | espressif32   | esp32dev    | gnu++17     | ESP32 (Xtensa LX6, dual-core, 240 MHz) |
+| `esp32-release` | espressif32 | esp32dev    | gnu++17     | Same, optimized for size (-Os) |
+| `esp8266`     | espressif8266 | nodemcuv2   | gnu++11     | ESP8266 (Tensilica L106, single-core, 80 MHz) |
+| `arduino-uno` | atmelavr      | uno         | gnu++11     | ATmega328P (8-bit, 16 MHz) |
+| `native`      | native        | —           | c++17       | Host machine (for unit tests) |
 
 ### Recommended platformio.ini
 

@@ -7,6 +7,7 @@ RGBW lighting apps for ESP32 and Arduino using PlatformIO.
 ```
 apps/                   # Each app is a standalone PlatformIO project
   example-rgbw/         # Template app — copy this to start a new project
+  led-panel/            # 24x36 RGBW panel (ESP32 + ESP8266)
 shared/lib/             # Shared libraries used across apps
   RGBWCommon/           # Color types (RGBW, HSV), conversions, utilities
   LEDStrip/             # Addressable strip driver (SK6812 RGBW, WS2815B RGB) via NeoPixelBus
@@ -28,6 +29,7 @@ Shared libraries are automatically available via `lib_extra_dirs` in each app's 
 | Board | LED Type | Connectivity |
 |-------|----------|-------------|
 | ESP32 | SK6812 RGBW / WS2815B RGB strips, PWM channels | WiFi, BLE |
+| ESP8266 (NodeMCU) | SK6812 RGBW / WS2815B RGB strips | WiFi |
 | Arduino Uno/Mega | SK6812 RGBW / WS2815B RGB strips, PWM channels | — |
 
 ## Building

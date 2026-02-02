@@ -18,6 +18,8 @@
 # Build
 build/
 cmake-build-*/
+compile_commands.json
+.cache/
 
 # OS
 .DS_Store

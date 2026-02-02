@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-PlatformIO monorepo for RGBW LED lighting controllers targeting ESP32 and Arduino (AVR) platforms. The system supports addressable LED strips (SK6812 RGBW and WS2815B RGB), PWM-driven MOSFET channels, I2S microphones for sound-reactive lighting, RCA audio input, WiFi/BLE wireless control, and physical switches.
+PlatformIO monorepo for RGBW LED lighting controllers targeting ESP32, ESP8266, and Arduino (AVR) platforms. The system supports addressable LED strips (SK6812 RGBW and WS2815B RGB), PWM-driven MOSFET channels, I2S microphones for sound-reactive lighting, RCA audio input, WiFi/BLE wireless control, and physical switches.
 
 ---
 
@@ -218,6 +218,10 @@ rgbw-lighting/
     example-rgbw/               # Template app (copy to create new apps)
       platformio.ini
       src/main.cpp
+    led-panel/                  # 24x36 RGBW panel (ESP32 + ESP8266)
+      platformio.ini
+      src/
+      test/
   shared/lib/                   # Shared libraries (linked via lib_extra_dirs)
     RGBWCommon/                 # Core RGBW/HSV types, color math, utilities
     LEDStrip/                   # Addressable strip driver (SK6812 RGBW, WS2815B RGB)
@@ -249,10 +253,11 @@ Connectivity        (ESP32 only, no internal lib dependencies)
 **Shared library path:** `lib_extra_dirs = ../../shared/lib` in each app's `platformio.ini`
 **PlatformIO venv:** `source .venv/bin/activate` or `.venv/bin/pio run`
 
-| Environment    | Platform      | Board      | C++ Standard |
-|---------------|---------------|------------|-------------|
-| `esp32`       | espressif32   | esp32dev   | gnu++17     |
-| `arduino-uno` | atmelavr      | uno        | gnu++11     |
+| Environment    | Platform      | Board       | C++ Standard |
+|---------------|---------------|-------------|-------------|
+| `esp32`       | espressif32   | esp32dev    | gnu++17     |
+| `esp8266`     | espressif8266 | nodemcuv2   | gnu++11     |
+| `arduino-uno` | atmelavr      | uno         | gnu++11     |
 
 -> Full build configuration, flags, and test setup: **[docs/build-and-tooling.md](docs/build-and-tooling.md)**
 
