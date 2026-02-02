@@ -3,69 +3,82 @@
 #if AUDIO_ENABLED
 
 #include <Arduino.h>
-#include <math.h>
+#include "audio_input.h"
 
-// --- Sliding window for beat detection ---
-#define ENERGY_WINDOW 16
-static float s_energyHistory[ENERGY_WINDOW];
-static uint8_t s_energyIndex = 0;
-static uint32_t s_lastBeatMs = 0;
-static float s_bpmEma = 120.0f;
+static_assert(AUDIO_NUM_BANDS == AUDIO_INPUT_NUM_BANDS,
+              "AUDIO_NUM_BANDS must match AUDIO_INPUT_NUM_BANDS");
+
+#define AUDIO_STALE_MS 500
+
+static AudioInput s_audioInput;
 
 void audioBegin() {
-    pinMode(PIN_MIC, INPUT);
-    for (uint8_t i = 0; i < ENERGY_WINDOW; i++) {
-        s_energyHistory[i] = 0.0f;
+    AudioInputMode mode = (AUDIO_INPUT_MODE == 1)
+        ? AudioInputMode::I2S_ADC
+        : AudioInputMode::I2S_MIC;
+    AudioInputConfig cfg = audioInputDefaultConfig(mode);
+    cfg.pinSCK  = PIN_I2S_SCK;
+    cfg.pinWS   = PIN_I2S_WS;
+    cfg.pinSD   = PIN_I2S_SD;
+    cfg.pinMCLK = PIN_I2S_MCLK;
+    cfg.beatThreshold  = BEAT_THRESHOLD;
+    cfg.beatCooldownMs = BEAT_COOLDOWN_MS;
+    cfg.bpmAlpha       = BPM_EMA_ALPHA;
+
+    AudioInputError err = s_audioInput.begin(cfg);
+    if (err != AudioInputError::Ok) {
+        Serial.print(F("AudioInput begin failed: "));
+        Serial.println((uint8_t)err);
     }
 }
 
 void audioUpdate(AudioState& state, uint32_t nowMs) {
-    state.beatDetected = false;
-
-    // --- Sample burst (assumes default 12-bit ADC, max sample ±2048) ---
-    int32_t sumSq = 0;
-    for (uint16_t i = 0; i < AUDIO_SAMPLE_COUNT; i++) {
-        int16_t sample = analogRead(PIN_MIC) - 2048;  // center around zero (12-bit ADC)
-        sumSq += (int32_t)sample * sample;
-    }
-
-    // RMS calculation
-    float meanSq = (float)sumSq / AUDIO_SAMPLE_COUNT;
-    float rms = (meanSq > 0.0f) ? sqrtf(meanSq) : 0.0f;
-
-    // Normalize to 0.0-1.0 (2048 is max amplitude for 12-bit centered)
-    float energy = rms / 2048.0f;
-    if (energy > 1.0f) energy = 1.0f;
-    state.energy = energy;
-
-    // --- Sliding window average ---
-    s_energyHistory[s_energyIndex] = energy;
-    s_energyIndex = (s_energyIndex + 1) % ENERGY_WINDOW;
-
-    float avgEnergy = 0.0f;
-    for (uint8_t i = 0; i < ENERGY_WINDOW; i++) {
-        avgEnergy += s_energyHistory[i];
-    }
-    avgEnergy /= ENERGY_WINDOW;
-
-    // --- Beat detection ---
-    if (energy > avgEnergy * BEAT_THRESHOLD &&
-        energy > 0.05f &&
-        (nowMs - s_lastBeatMs) >= BEAT_COOLDOWN_MS) {
-        state.beatDetected = true;
-
-        // BPM tracking from beat interval
-        if (s_lastBeatMs > 0) {
-            uint32_t interval = nowMs - s_lastBeatMs;
-            if (interval > 250 && interval < 2000) {  // 30-240 BPM range
-                float instantBpm = 60000.0f / interval;
-                s_bpmEma = s_bpmEma * (1.0f - BPM_EMA_ALPHA) + instantBpm * BPM_EMA_ALPHA;
+    AudioSpectrum spectrum;
+    if (s_audioInput.getSpectrum(spectrum)) {
+        if (nowMs - spectrum.timestampMs > AUDIO_STALE_MS) {
+            // Data is stale (task may have died) — zero transients
+            state.energy = 0.0f;
+            state.beatDetected = false;
+            state.bpm = 0.0f;
+            state.beatPhase = 0.0f;
+            state.nextBeatMs = 0;
+            for (uint8_t i = 0; i < AUDIO_NUM_BANDS; i++) {
+                state.bandEnergy[i] = 0.0f;
+            }
+        } else {
+            // Fresh data
+            state.energy = spectrum.rmsEnergy;
+            state.beatDetected = spectrum.beatDetected;
+            state.bpm = spectrum.bpm;
+            state.beatPhase = spectrum.beatPhase;
+            state.nextBeatMs = spectrum.nextBeatMs;
+            for (uint8_t i = 0; i < AUDIO_NUM_BANDS; i++) {
+                state.bandEnergy[i] = spectrum.bandEnergy[i];
             }
         }
-        s_lastBeatMs = nowMs;
+    } else {
+        // No data at all — zero everything
+        state.energy = 0.0f;
+        state.beatDetected = false;
+        state.bpm = 0.0f;
+        state.beatPhase = 0.0f;
+        state.nextBeatMs = 0;
+        for (uint8_t i = 0; i < AUDIO_NUM_BANDS; i++) {
+            state.bandEnergy[i] = 0.0f;
+        }
     }
+}
 
-    state.bpm = s_bpmEma;
+uint32_t audioMsToNextBeat(const AudioState& state, uint32_t nowMs,
+                           uint32_t maxDelayMs) {
+    if (state.bpm < 1.0f || state.nextBeatMs == 0) {
+        return 0;  // no tracking, don't delay
+    }
+    if (state.nextBeatMs <= nowMs) {
+        return 0;  // beat is now or past
+    }
+    uint32_t delta = state.nextBeatMs - nowMs;
+    return (delta > maxDelayMs) ? 0 : delta;
 }
 
 #else
@@ -80,6 +93,19 @@ void audioUpdate(AudioState& state, uint32_t nowMs) {
     state.energy = 0.0f;
     state.beatDetected = false;
     state.bpm = 0.0f;
+    state.beatPhase = 0.0f;
+    state.nextBeatMs = 0;
+    for (uint8_t i = 0; i < AUDIO_NUM_BANDS; i++) {
+        state.bandEnergy[i] = 0.0f;
+    }
+}
+
+uint32_t audioMsToNextBeat(const AudioState& state, uint32_t nowMs,
+                           uint32_t maxDelayMs) {
+    (void)state;
+    (void)nowMs;
+    (void)maxDelayMs;
+    return 0;
 }
 
 #endif

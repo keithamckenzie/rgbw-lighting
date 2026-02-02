@@ -1,0 +1,7 @@
+{
+  "name": "AudioInput",
+  "version": "0.1.0",
+  "description": "I2S audio input with ESP-DSP FFT, beat detection, and band analysis",
+  "frameworks": ["arduino"],
+  "platforms": ["espressif32"]
+}

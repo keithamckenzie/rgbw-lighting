@@ -1,4 +1,5 @@
 #include "input.h"
+#include "audio.h"
 
 #ifndef NATIVE_BUILD
 #include <Arduino.h>
@@ -8,6 +9,12 @@
 static bool s_lastButtonState = false;
 static uint32_t s_pressStartMs = 0;
 static bool s_longPressHandled = false;
+
+// --- Beat-quantized mode change ---
+static bool s_pendingModeChange = false;
+#if AUDIO_ENABLED
+static uint32_t s_pendingDeadlineMs = 0;
+#endif
 
 // --- ADC moving average ---
 static uint16_t s_adcSamples[ADC_SAMPLES];
@@ -54,8 +61,31 @@ static uint8_t readBrightness(uint32_t nowMs) {
     return (uint8_t)(sum / ADC_SAMPLES);
 }
 
-void inputUpdate(InputState& state, uint32_t nowMs) {
+// --- Apply a deferred mode change ---
+static void applyModeChange(InputState& state) {
+    state.currentMode = nextMode(state.currentMode);
+    state.modeChanged = true;
+    s_pendingModeChange = false;
+}
+
+void inputUpdate(InputState& state, uint32_t nowMs,
+                 const AudioState* audio) {
     state.modeChanged = false;
+
+    // --- Check pending beat-quantized mode change ---
+    if (s_pendingModeChange) {
+#if AUDIO_ENABLED
+        if (audio && audio->beatDetected) {
+            // Beat arrived — apply now
+            applyModeChange(state);
+        } else if (nowMs >= s_pendingDeadlineMs) {
+            // Deadline expired — apply anyway
+            applyModeChange(state);
+        }
+#else
+        applyModeChange(state);
+#endif
+    }
 
 #ifndef NATIVE_BUILD
     // --- Button handling ---
@@ -78,18 +108,33 @@ void inputUpdate(InputState& state, uint32_t nowMs) {
 
     if (!pressed && s_lastButtonState) {
         // Button just released
-        if (!s_longPressHandled) {
+        if (!s_longPressHandled && !s_pendingModeChange) {
             // Short press: next mode (or power on if off)
             if (!state.powerOn) {
                 state.powerOn = true;
             } else {
-                state.currentMode = nextMode(state.currentMode);
-                state.modeChanged = true;
+#if AUDIO_ENABLED
+                // Try to quantize to beat
+                uint32_t delay = 0;
+                if (audio) {
+                    delay = audioMsToNextBeat(*audio, nowMs);
+                }
+                if (delay > 0) {
+                    s_pendingModeChange = true;
+                    s_pendingDeadlineMs = nowMs + delay + 50;  // 50ms grace
+                } else {
+                    applyModeChange(state);
+                }
+#else
+                applyModeChange(state);
+#endif
             }
         }
     }
 
     s_lastButtonState = pressed;
+#else
+    (void)audio;
 #endif
 
     // --- Brightness from pot ---

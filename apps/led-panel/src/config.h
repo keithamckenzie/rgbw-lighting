@@ -42,8 +42,18 @@
     #ifndef PIN_BRIGHTNESS
     #define PIN_BRIGHTNESS 32   // ADC1
     #endif
-    #ifndef PIN_MIC
-    #define PIN_MIC 33          // ADC1
+    // I2S audio pins
+    #ifndef PIN_I2S_SCK
+    #define PIN_I2S_SCK 26
+    #endif
+    #ifndef PIN_I2S_WS
+    #define PIN_I2S_WS 25
+    #endif
+    #ifndef PIN_I2S_SD
+    #define PIN_I2S_SD 33
+    #endif
+    #ifndef PIN_I2S_MCLK
+    #define PIN_I2S_MCLK 0   // GPIO 0 is hardware-fixed MCLK for I2S_NUM_0
     #endif
 #elif defined(ESP8266)
     // ESP8266 UART1 always outputs on GPIO2/D4; pin is ignored by NeoPixelBus
@@ -83,14 +93,11 @@
 #define ADC_SAMPLES       8     // moving average window
 
 // --- Audio tuning (ESP32 only) ---
-#define AUDIO_SAMPLE_COUNT 64   // ~5ms burst at ~80us/analogRead; I2S DMA planned (see roadmap)
+// 0 = I2S mic (ICS-43434, default), 1 = I2S ADC (PCM1808)
+#ifndef AUDIO_INPUT_MODE
+#define AUDIO_INPUT_MODE 0
+#endif
 
-#if AUDIO_SAMPLE_COUNT < 1
-#error "AUDIO_SAMPLE_COUNT must be at least 1"
-#endif
-#if AUDIO_SAMPLE_COUNT > 511
-#error "AUDIO_SAMPLE_COUNT > 511 overflows int32_t sumSq (12-bit ADC: 512 * 2048^2 > INT32_MAX)"
-#endif
 #define BEAT_THRESHOLD     1.5f // energy vs average ratio
 #define BEAT_COOLDOWN_MS   200  // minimum ms between beats
 #define BPM_EMA_ALPHA      0.15f

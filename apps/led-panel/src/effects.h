@@ -24,6 +24,7 @@ enum class EffectMode : uint8_t {
     GradientSweep,
     Fire,
     SoundReactive,  // always present for stable enum values
+    Spectrum,       // per-pixel frequency band visualization
     Twinkle,
     Breathing,
     COUNT   // must be last

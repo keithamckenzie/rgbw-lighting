@@ -183,24 +183,37 @@ static void effectFire(RGBW* buffer, uint16_t numPixels, const EffectContext& ct
 #if AUDIO_ENABLED
 static void effectSoundReactive(RGBW* buffer, uint16_t numPixels, const EffectContext& ctx) {
     const AudioState* audio = ctx.audio;
+
+    float bass   = 0.0f;
+    float mids   = 0.0f;
+    float highs  = 0.0f;
     float energy = 0.0f;
-    bool beat = false;
+    bool  beat   = false;
 
     if (audio) {
+        // Bass: bands 0+1 (sub-bass + bass, ~43-172 Hz)
+        bass = (audio->bandEnergy[0] + audio->bandEnergy[1]) * 0.5f;
+        // Mids: bands 2+3+4 (low-mid through upper-mid, ~172-1378 Hz)
+        mids = (audio->bandEnergy[2] + audio->bandEnergy[3] + audio->bandEnergy[4]) / 3.0f;
+        // Highs: bands 5+6+7 (presence through air, ~1378-11025 Hz)
+        highs = (audio->bandEnergy[5] + audio->bandEnergy[6] + audio->bandEnergy[7]) / 3.0f;
         energy = audio->energy;
         beat = audio->beatDetected;
     }
 
-    // Map energy to hue: low = blue, high = red
-    uint16_t hue = (uint16_t)(240 - energy * 240);
-    HSV hsv = { hue, 255, (uint8_t)(energy * 255) };
-    RGBW color = hsvToRGBW(hsv);
+    // Map frequency bands to RGB channels
+    uint8_t r = (uint8_t)(bass  * 255);
+    uint8_t g = (uint8_t)(mids  * 255);
+    uint8_t b = (uint8_t)(highs * 255);
+    uint8_t w = (uint8_t)(energy * 80);  // subtle white from overall energy
+
+    RGBW color = RGBW(r, g, b, w);
 
     for (uint16_t i = 0; i < numPixels; i++) {
         buffer[i] = color;
     }
 
-    // Beat flash: overlay white burst
+    // Beat flash: white burst
     if (beat) {
         for (uint16_t i = 0; i < numPixels; i++) {
             buffer[i].w = 255;
@@ -210,7 +223,84 @@ static void effectSoundReactive(RGBW* buffer, uint16_t numPixels, const EffectCo
 #endif
 
 // ====================================================================
-// Effect 7: Twinkle — random pixels spark and fade
+// Effect 7: Spectrum — per-pixel frequency band visualization
+// ====================================================================
+#if AUDIO_ENABLED
+
+// Band colors: sub-bass through air, warm-to-cool gradient
+static const RGBW s_bandColors[AUDIO_NUM_BANDS] = {
+    RGBW(255,   0,   0,   0),  // Band 0: Sub-bass  — red
+    RGBW(255,  80,   0,   0),  // Band 1: Bass      — orange
+    RGBW(255, 200,   0,   0),  // Band 2: Low-mid   — yellow
+    RGBW(  0, 255,   0,   0),  // Band 3: Mid       — green
+    RGBW(  0, 200, 255,   0),  // Band 4: Upper-mid — cyan
+    RGBW(  0,  80, 255,   0),  // Band 5: Presence  — blue
+    RGBW(120,   0, 255,   0),  // Band 6: Brilliance— purple
+    RGBW(255,   0, 200,   0),  // Band 7: Air       — magenta
+};
+
+static void effectSpectrum(RGBW* buffer, uint16_t numPixels, const EffectContext& ctx) {
+    const AudioState* audio = ctx.audio;
+
+    // Clear buffer
+    for (uint16_t i = 0; i < numPixels; i++) {
+        buffer[i] = RGBW(0, 0, 0, 0);
+    }
+
+    // Divide panel width into 8 band columns
+    uint16_t colsPerBand = PANEL_WIDTH / AUDIO_NUM_BANDS;
+    if (colsPerBand < 1) colsPerBand = 1;
+
+    for (uint8_t band = 0; band < AUDIO_NUM_BANDS; band++) {
+        float energy = 0.0f;
+        if (audio) {
+            energy = audio->bandEnergy[band];
+        }
+
+        // Bar height proportional to energy (bottom-up)
+        uint16_t barHeight = (uint16_t)(energy * PANEL_HEIGHT);
+        if (barHeight > PANEL_HEIGHT) barHeight = PANEL_HEIGHT;
+
+        RGBW color = s_bandColors[band];
+        uint16_t xStart = band * colsPerBand;
+        uint16_t xEnd = xStart + colsPerBand;
+        if (band == AUDIO_NUM_BANDS - 1) {
+            xEnd = PANEL_WIDTH;  // last band gets remaining columns
+        }
+
+        for (uint16_t x = xStart; x < xEnd; x++) {
+            for (uint16_t barY = 0; barY < barHeight; barY++) {
+                // Bottom-up: y=0 is top, so filled from PANEL_HEIGHT-1 upward
+                uint16_t y = PANEL_HEIGHT - 1 - barY;
+                uint16_t idx = mapXY(x, y);
+                if (idx < numPixels) {
+                    // Dim toward the top of the bar for gradient feel
+                    uint8_t intensity = 255 - (uint8_t)((uint16_t)barY * 128 / PANEL_HEIGHT);
+                    buffer[idx] = RGBW(
+                        (uint8_t)((uint16_t)color.r * intensity / 255),
+                        (uint8_t)((uint16_t)color.g * intensity / 255),
+                        (uint8_t)((uint16_t)color.b * intensity / 255),
+                        0
+                    );
+                }
+            }
+        }
+    }
+
+    // Beat flash: brief white on the peak row
+    if (audio && audio->beatDetected) {
+        for (uint16_t x = 0; x < PANEL_WIDTH; x++) {
+            uint16_t idx = mapXY(x, 0);
+            if (idx < numPixels) {
+                buffer[idx].w = 180;
+            }
+        }
+    }
+}
+#endif
+
+// ====================================================================
+// Effect 8: Twinkle — random pixels spark and fade
 // ====================================================================
 static uint8_t s_sparkState[NUM_PIXELS];
 
@@ -265,8 +355,10 @@ static const EffectFn s_effectTable[] = {
     effectFire,
 #if AUDIO_ENABLED
     effectSoundReactive,
+    effectSpectrum,
 #else
     effectSolid,  // stub: SoundReactive falls back to Solid when audio disabled
+    effectSolid,  // stub: Spectrum falls back to Solid when audio disabled
 #endif
     effectTwinkle,
     effectBreathing,
@@ -283,9 +375,9 @@ EffectFn getEffect(EffectMode mode) {
 EffectMode nextMode(EffectMode current) {
     uint8_t next = (uint8_t)current + 1;
 #if !AUDIO_ENABLED
-    // Skip SoundReactive when audio is disabled
+    // Skip audio effects when audio is disabled
     if (next == (uint8_t)EffectMode::SoundReactive) {
-        next++;
+        next = (uint8_t)EffectMode::Twinkle;  // jump past SoundReactive + Spectrum
     }
 #endif
     if (next >= (uint8_t)EffectMode::COUNT) {
@@ -302,8 +394,10 @@ static const char* const s_effectNames[] = {
     "Fire",
 #if AUDIO_ENABLED
     "SoundReactive",
+    "Spectrum",
 #else
     "SoundReactive (off)",
+    "Spectrum (off)",
 #endif
     "Twinkle",
     "Breathing",

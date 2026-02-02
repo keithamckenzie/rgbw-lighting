@@ -62,6 +62,11 @@ void setup() {
     audioState.energy = 0.0f;
     audioState.beatDetected = false;
     audioState.bpm = 0.0f;
+    audioState.beatPhase = 0.0f;
+    audioState.nextBeatMs = 0;
+    for (uint8_t i = 0; i < AUDIO_NUM_BANDS; i++) {
+        audioState.bandEnergy[i] = 0.0f;
+    }
 
     startMs = millis();
     lastFrameMs = startMs;
@@ -89,8 +94,8 @@ void loop() {
     }
     lastFrameMs = nowMs;
 
-    // --- Input ---
-    inputUpdate(inputState, nowMs);
+    // --- Input (audio pointer enables beat-quantized mode switching) ---
+    inputUpdate(inputState, nowMs, &audioState);
 
     // --- Audio (no-op on ESP8266) ---
     audioUpdate(audioState, nowMs);
