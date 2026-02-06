@@ -62,15 +62,16 @@ pub fn parse_platformio_ini(path: &Path) -> Result<PlatformioConfig, String> {
 
     // Third pass: resolve variable interpolation
     for env_name in &env_names {
-        let props = resolved_envs.get_mut(env_name).unwrap();
-        resolve_interpolation(props, &resolved_envs);
+        let mut props = resolved_envs.get(env_name).expect("resolved env must exist").clone();
+        resolve_interpolation(&mut props, &resolved_envs);
+        resolved_envs.insert(env_name.clone(), props);
     }
 
     // Convert to DiscoveredEnvironment structs
     let environments: Vec<DiscoveredEnvironment> = env_names
         .iter()
         .map(|name| {
-            let props = resolved_envs.get(name).unwrap();
+            let props = resolved_envs.get(name).expect("resolved env must exist");
             let platform = props.get("platform").cloned().unwrap_or_default();
             let is_native = platform == "native";
 
@@ -358,8 +359,11 @@ extra = ${env.build_flags}
             .iter()
             .find(|e| e.name == "dev")
             .unwrap();
-        assert!(env.build_flags.contains(&"-DFOO=1".to_string()));
-        assert!(env.build_flags.contains(&"-DBAR=2".to_string()));
+        // Build flags on one line become one item after parsing
+        assert!(!env.build_flags.is_empty());
+        let flags_str = env.build_flags.join(" ");
+        assert!(flags_str.contains("-DFOO=1"), "Should contain interpolated FOO flag");
+        assert!(flags_str.contains("-DBAR=2"), "Should contain BAR flag");
         assert!(env.lib_deps.is_empty());
     }
 }

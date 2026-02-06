@@ -373,6 +373,26 @@ Connectivity        (ESP32 only, no internal lib dependencies)
 
 -> Full upgrade details, migration guides, known improvements: **[docs/project-roadmap.md](docs/project-roadmap.md)**
 
+## External Review Skills
+
+Codex and Gemini CLI skills are available from `~/Projects/ffnextgf/.claude/skills/` for multi-model code review and validation.
+
+| Skill | When to Use |
+|-------|-------------|
+| `/codex-ask` | Quick questions to OpenAI Codex for second-opinion analysis |
+| `/codex-fix` | Auto-fix code issues using Codex |
+| `/codex-plan` | Before finalizing architectural decisions — get alternative perspectives |
+| `/codex-review` | After completing a phase — multi-round code review loop |
+| `/gemini-ask` | Quick questions to Gemini for second-opinion analysis |
+| `/gemini-review` | After large change sets (>5 files or >200 LOC) — edge case detection |
+| `/gemini-ui` | After accessibility or CSS changes — UI/UX review |
+| `/gemini-vision` | Screenshot-based UI review using Gemini's vision capabilities |
+
+**Workflow integration:**
+- Run `/codex-review` after bug fix phases for correctness validation
+- Run `/gemini-ui` after accessibility or design system changes
+- Run `/gemini-review` after large multi-file change sets
+
 ## Documentation Index
 
 | Document | Contents |

@@ -73,6 +73,15 @@ mod tests {
         fs::create_dir_all(pio_path.parent().unwrap()).unwrap();
         fs::write(&pio_path, "").unwrap();
 
+        // Make the file executable on Unix
+        #[cfg(not(target_os = "windows"))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&pio_path).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&pio_path, perms).unwrap();
+        }
+
         let result = resolve_pio_path(temp.path());
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), pio_path);

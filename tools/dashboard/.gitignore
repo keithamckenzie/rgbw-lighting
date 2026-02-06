@@ -23,3 +23,8 @@ Thumbs.db
 
 # Tauri
 src-tauri/Cargo.lock
+
+# Test artifacts
+playwright-report/
+test-results/
+coverage/

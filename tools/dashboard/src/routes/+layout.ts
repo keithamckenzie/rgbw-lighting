@@ -1,3 +1,2 @@
-// Disable SSR for Tauri
+// Disable SSR for Tauri (SPA mode with adapter-static fallback)
 export const ssr = false;
-export const prerender = true;

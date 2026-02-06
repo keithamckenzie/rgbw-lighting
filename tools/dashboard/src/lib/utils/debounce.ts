@@ -1,11 +1,11 @@
-export type DebouncedFunction<T extends (...args: any[]) => void> = T & {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AnyFunction = (...args: any[]) => void;
+
+export type DebouncedFunction<T extends AnyFunction> = T & {
 	cancel: () => void;
 };
 
-export function debounce<T extends (...args: any[]) => void>(
-	fn: T,
-	waitMs: number
-): DebouncedFunction<T> {
+export function debounce<T extends AnyFunction>(fn: T, waitMs: number): DebouncedFunction<T> {
 	let timeout: ReturnType<typeof setTimeout> | null = null;
 
 	const debounced = ((...args: Parameters<T>) => {
