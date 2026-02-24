@@ -2,6 +2,6 @@
   "name": "RGBWCommon",
   "version": "0.1.0",
   "description": "Common RGBW color types, conversions, and utilities",
-  "frameworks": ["arduino"],
-  "platforms": ["espressif32", "espressif8266", "atmelavr", "atmelsam"]
+  "frameworks": "*",
+  "platforms": "*"
 }

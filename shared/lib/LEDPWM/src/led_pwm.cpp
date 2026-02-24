@@ -44,17 +44,18 @@ void LEDPWM::off() {
 
 void LEDPWM::_applyColor() {
     RGBW scaled = scaleBrightness(_currentColor, _brightness);
+    RGBW corrected = applyGamma(scaled);
 #ifdef ESP32
     // Scale 8-bit channel values to match configured resolution
     uint32_t maxDuty = (1 << _resolution) - 1;
-    ledcWrite(_pins.r, (uint32_t)scaled.r * maxDuty / 255);
-    ledcWrite(_pins.g, (uint32_t)scaled.g * maxDuty / 255);
-    ledcWrite(_pins.b, (uint32_t)scaled.b * maxDuty / 255);
-    ledcWrite(_pins.w, (uint32_t)scaled.w * maxDuty / 255);
+    ledcWrite(_pins.r, (uint32_t)corrected.r * maxDuty / 255);
+    ledcWrite(_pins.g, (uint32_t)corrected.g * maxDuty / 255);
+    ledcWrite(_pins.b, (uint32_t)corrected.b * maxDuty / 255);
+    ledcWrite(_pins.w, (uint32_t)corrected.w * maxDuty / 255);
 #else
-    analogWrite(_pins.r, scaled.r);
-    analogWrite(_pins.g, scaled.g);
-    analogWrite(_pins.b, scaled.b);
-    analogWrite(_pins.w, scaled.w);
+    analogWrite(_pins.r, corrected.r);
+    analogWrite(_pins.g, corrected.g);
+    analogWrite(_pins.b, corrected.b);
+    analogWrite(_pins.w, corrected.w);
 #endif
 }

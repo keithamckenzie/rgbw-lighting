@@ -29,5 +29,8 @@ Thumbs.db
 secrets.h
 credentials.h
 
+# Claude Code
+.claude/settings.local.json
+
 # Internal docs
 conversations/

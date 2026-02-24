@@ -24,7 +24,7 @@ static uint8_t s_nextRmtChannel = 0;
 // --- Impl specialization: SK6812 RGBW ---
 template<>
 struct LEDStrip<StripType::SK6812_RGBW>::Impl {
-    NeoPixelBusLg<NeoGrbwFeature, Sk6812Method, NeoGammaNullMethod> bus;
+    NeoPixelBusLg<NeoGrbwFeature, Sk6812Method, NeoGammaTableMethod> bus;
 #ifdef ESP32
     Impl(uint16_t n, uint8_t p) : bus(n, p, (NeoBusChannel)s_nextRmtChannel++) {}
 #else
@@ -39,7 +39,7 @@ struct LEDStrip<StripType::SK6812_RGBW>::Impl {
 // --- Impl specialization: WS2815B RGB (white-fold) ---
 template<>
 struct LEDStrip<StripType::WS2815B_RGB>::Impl {
-    NeoPixelBusLg<NeoGrbFeature, Ws2812xMethod, NeoGammaNullMethod> bus;
+    NeoPixelBusLg<NeoGrbFeature, Ws2812xMethod, NeoGammaTableMethod> bus;
 #ifdef ESP32
     Impl(uint16_t n, uint8_t p) : bus(n, p, (NeoBusChannel)s_nextRmtChannel++) {}
 #else

@@ -39,11 +39,12 @@ RGBW lerpRGBW(const RGBW& a, const RGBW& b, float t) {
 }
 
 RGBW scaleBrightness(const RGBW& color, uint8_t brightness) {
+    uint16_t b = (uint16_t)brightness + 1;
     return RGBW(
-        (color.r * brightness) >> 8,
-        (color.g * brightness) >> 8,
-        (color.b * brightness) >> 8,
-        (color.w * brightness) >> 8
+        (uint8_t)((color.r * b) >> 8),
+        (uint8_t)((color.g * b) >> 8),
+        (uint8_t)((color.b * b) >> 8),
+        (uint8_t)((color.w * b) >> 8)
     );
 }
 

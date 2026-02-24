@@ -373,25 +373,52 @@ Connectivity        (ESP32 only, no internal lib dependencies)
 
 -> Full upgrade details, migration guides, known improvements: **[docs/project-roadmap.md](docs/project-roadmap.md)**
 
-## External Review Skills
+## Review Skills
 
-Codex and Gemini CLI skills are available from `~/Projects/ffnextgf/.claude/skills/` for multi-model code review and validation.
+Multi-model code review and validation skills in `.claude/skills/`. All skills are self-contained with correct project paths, embedded domain context, and PlatformIO verification commands — no manual overrides needed.
 
-| Skill | When to Use |
-|-------|-------------|
-| `/codex-ask` | Quick questions to OpenAI Codex for second-opinion analysis |
-| `/codex-fix` | Auto-fix code issues using Codex |
-| `/codex-plan` | Before finalizing architectural decisions — get alternative perspectives |
-| `/codex-review` | After completing a phase — multi-round code review loop |
-| `/gemini-ask` | Quick questions to Gemini for second-opinion analysis |
-| `/gemini-review` | After large change sets (>5 files or >200 LOC) — edge case detection |
-| `/gemini-ui` | After accessibility or CSS changes — UI/UX review |
-| `/gemini-vision` | Screenshot-based UI review using Gemini's vision capabilities |
+### Skill Reference
 
-**Workflow integration:**
+| Skill | Purpose | Auto-Invoke Trigger |
+|-------|---------|---------------------|
+| `/claude-ask` | One-off questions to Claude CLI | Manual only |
+| `/claude-plan` | Plan review via Claude CLI | Manual only |
+| `/claude-review` | Advisory code review via Claude CLI | Manual only |
+| `/codex-ask` | One-off questions to Codex with optional web search | Manual only |
+| `/codex-fix` | Let Codex directly edit files (warns on dirty tree) | Manual only |
+| `/codex-implement` | Feature implementation via Codex (sandbox: claude-full) | Manual only |
+| `/codex-plan` | Review implementation plan before finalizing | Before `ExitPlanMode` on non-trivial plans |
+| `/codex-review` | Multi-round code review loop (scopes: working-tree, staged, branch, files) | After completing a phase or bug fix |
+| `/gemini-ask` | Quick questions to Gemini with structured JSON output | Manual only |
+| `/gemini-review` | Advisory last-10% review for edge cases and risks | After change sets >5 files or >200 LOC |
+| `/gemini-ui` | UI/UX review: layout, accessibility, design-system (Tauri dashboard) | After dashboard (tools/dashboard) UI changes |
+| `/gemini-vision` | Convert screenshots/mockups into implementation guidance | When user provides an image for UI work |
+
+### Workflow Integration
+
+**During planning:**
+- Run `/codex-plan` before finalizing any non-trivial implementation plan
+
+**After implementation:**
 - Run `/codex-review` after bug fix phases for correctness validation
-- Run `/gemini-ui` after accessibility or design system changes
-- Run `/gemini-review` after large multi-file change sets
+- Run `/codex-review --scope branch` before requesting user commit approval on multi-file changes
+
+**For large change sets (>5 files or >200 LOC):**
+- Run `/gemini-review` after `/codex-review` completes — Gemini catches the last 10% of edge cases
+
+**For dashboard UI work (tools/dashboard):**
+- Run `/gemini-ui` after accessibility, CSS, or design system changes
+- Run `/gemini-vision` when the user provides a screenshot or mockup to implement
+
+### Embedded-Specific Review Focus
+
+When composing review prompts for this project, emphasize these domain-specific concerns over web-app concerns:
+
+- **Memory safety:** Stack overflow, heap fragmentation, buffer overruns, DMA buffer alignment
+- **Concurrency:** FreeRTOS task priorities, ISR safety, mutex usage, Core 0 vs Core 1
+- **Hardware interaction:** GPIO safety (strapping pins, input-only pins, ADC2+WiFi conflict), timing constraints, power budget
+- **Platform portability:** C++11 compatibility in shared libraries, `#if __cplusplus` guards, printf format macros
+- **Real-time constraints:** Loop timing, `vTaskDelayUntil()` usage, blocking calls in time-critical paths
 
 ## Documentation Index
 

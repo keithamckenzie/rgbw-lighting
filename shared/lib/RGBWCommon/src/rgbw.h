@@ -29,3 +29,7 @@ RGBW scaleBrightness(const RGBW& color, uint8_t brightness);
 
 // Convert RGBW to RGB by folding white channel back into R, G, B (clamped to 255)
 RGBW rgbwToRgb(const RGBW& color);
+
+// Apply gamma 2.2 correction via lookup table
+uint8_t applyGamma(uint8_t value);
+RGBW applyGamma(const RGBW& color);

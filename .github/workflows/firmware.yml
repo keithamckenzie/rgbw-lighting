@@ -1,0 +1,97 @@
+name: Firmware CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/**'
+      - 'shared/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/**'
+      - 'shared/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # led-panel app
+          - app: led-panel
+            env: esp32
+          - app: led-panel
+            env: esp8266
+          - app: led-panel
+            env: native
+          - app: led-panel
+            env: native-progressive-h
+          - app: led-panel
+            env: native-serpentine-v
+          # example-rgbw app
+          - app: example-rgbw
+            env: esp32
+          - app: example-rgbw
+            env: arduino-uno
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('apps/${{ matrix.app }}/platformio.ini') }}
+          restore-keys: |
+            pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build
+        run: pio run -e ${{ matrix.env }}
+        working-directory: apps/${{ matrix.app }}
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: led-panel
+            env: native
+          - app: led-panel
+            env: native-progressive-h
+          - app: led-panel
+            env: native-serpentine-v
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('apps/${{ matrix.app }}/platformio.ini') }}
+          restore-keys: |
+            pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Run tests
+        run: pio test -e ${{ matrix.env }}
+        working-directory: apps/${{ matrix.app }}

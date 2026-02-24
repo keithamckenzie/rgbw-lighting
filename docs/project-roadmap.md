@@ -34,7 +34,7 @@ Implementation details:
 - Uses `NeoPixelBusLg` for master brightness via `SetLuminance()`
 - ESP32: Uses `NeoEsp32RmtNSk6812Method` / `NeoEsp32RmtNWs2812xMethod` with auto-assigned RMT channels (via 3-arg `NeoPixelBusLg` constructor). AVR: Uses generic `NeoSk6812Method` / `NeoWs2812xMethod` aliases (bit-bang).
 - Multiple strips on ESP32 are supported automatically — each instance claims the next RMT TX channel via a static counter. No manual channel assignment needed.
-- Gamma: `NeoGammaNullMethod` (no gamma, matching previous behavior). Future: swap to `NeoGammaTableMethod`
+- Gamma: `NeoGammaTableMethod` (gamma 2.2 correction applied internally by NeoPixelBus during `SetPixelColor()`)
 - Separate `RGBW* _pixels` buffer preserves un-folded, un-dimmed source colors
 - When RMT channels are exhausted, switch specific strips to I2S or SPI method
 
@@ -180,12 +180,12 @@ These are documented improvements to apply as the codebase matures:
 ### LEDPWM Library
 
 - ~~**Resolution upgrade:** Increase default from 8-bit to 12-bit.~~ **Done:** Default is now 19531 Hz / 12-bit. `_applyColor()` scales 8-bit channel values to the configured resolution.
-- **Gamma correction:** Add gamma correction in `_applyColor()`. Currently outputs linear PWM which doesn't match human brightness perception. See gamma correction details in [led-control.md](led-control.md#gamma-correction).
+- ~~**Gamma correction:** Add gamma correction in `_applyColor()`.~~ **Done:** `_applyColor()` now applies `applyGamma()` from RGBWCommon after brightness scaling. Uses a 256-entry gamma 2.2 LUT (`PROGMEM` on AVR).
 - **Hardware fade:** Consider adding `ledcFade()` for hardware-accelerated smooth transitions between colors. This offloads transition computation to the LEDC peripheral.
 
 ### RGBWCommon Library
 
-- **Brightness scaling fix:** `scaleBrightness()` uses `>> 8` which means brightness=255 yields ~99.6% output (254.something). Fix: use `((channel * (brightness + 1)) >> 8)` for accurate full-scale output where brightness=255 produces the exact input value.
+- ~~**Brightness scaling fix:** `scaleBrightness()` uses `>> 8` which means brightness=255 yields ~99.6% output (254.something).~~ **Done:** Uses `((channel * (brightness + 1)) >> 8)` for accurate full-scale output. brightness=255 now produces the exact input value.
 - **White extraction config:** Make white extraction configurable per LED type. SK6812 comes in warm white (~3000K), neutral white (~4000K), and cool white (~5000K) variants. The extraction ratio should account for the white LED's color temperature to maintain accurate color rendering.
 
 ### LEDStrip Library
