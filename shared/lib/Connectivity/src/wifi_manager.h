@@ -2,6 +2,8 @@
 
 #ifdef ESP32
 
+#include <memory>
+
 #include <WiFi.h>
 #include <WebServer.h>
 
@@ -16,7 +18,7 @@ public:
     void startAP(const char* apName, const char* apPassword = nullptr);
 
     // Start the built-in web server on the given port
-    WebServer& getServer() { return _server; }
+    WebServer& getServer();
     void startServer(uint16_t port = 80);
     void handleClient();
 
@@ -24,7 +26,8 @@ public:
     String getIP() const;
 
 private:
-    WebServer _server;
+    std::unique_ptr<WebServer> _server;
+    uint16_t _serverPort;
     bool _apMode;
 };
 

@@ -2,10 +2,18 @@
 
 #include "wifi_manager.h"
 
-WiFiManager::WiFiManager() : _server(80), _apMode(false) {}
+WiFiManager::WiFiManager() : _server(nullptr), _serverPort(80), _apMode(false) {}
+
+WebServer& WiFiManager::getServer() {
+    if (!_server) {
+        _server.reset(new WebServer(_serverPort));
+    }
+    return *_server;
+}
 
 bool WiFiManager::connect(const char* ssid, const char* password, uint32_t timeoutMs) {
     WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
     WiFi.begin(ssid, password);
 
     uint32_t start = millis();
@@ -27,12 +35,18 @@ void WiFiManager::startAP(const char* apName, const char* apPassword) {
 }
 
 void WiFiManager::startServer(uint16_t port) {
-    _server = WebServer(port);
-    _server.begin();
+    if (!_server || port != _serverPort) {
+        _server.reset(new WebServer(port));
+        _serverPort = port;
+    }
+
+    _server->begin();
 }
 
 void WiFiManager::handleClient() {
-    _server.handleClient();
+    if (_server) {
+        _server->handleClient();
+    }
 }
 
 bool WiFiManager::isConnected() const {
