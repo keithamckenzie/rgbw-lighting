@@ -1,10 +1,12 @@
 ---
 name: codex-plan
 description: Review an implementation plan with Codex before finalizing. Use during Plan Mode to get Codex's feedback on the plan, architectural decisions, trade-offs, and potential issues. Should be used before calling ExitPlanMode.
-allowed-tools: Read, Write, Bash(codex *), Bash(cat *), Bash(rm -f /tmp/codex-*)
+allowed-tools: Read, Write, Bash(codex *), Bash(echo *), Bash(INVOC_ID=*), Bash(cat *), Bash(rm -f /tmp/codex-plan-*), Bash(rm -f /tmp/codex-version-*)
 ---
 
 # Codex Plan Review
+
+**Shared protocol:** Read `.claude/skills/shared/codex-execution-protocol.md` for lifecycle steps and canonical fragments. Read `.claude/skills/shared/codex-antipatterns.md` for failure modes to avoid.
 
 Review an implementation plan with Codex before finalizing. Use during Plan Mode to get a second opinion on architectural decisions, trade-offs, and potential issues.
 
@@ -23,34 +25,34 @@ Review an implementation plan with Codex before finalizing. Use during Plan Mode
 
 ## Privacy Guardrail
 
-When `--search` is enabled (the default), do NOT paste secrets, tokens, API keys, or proprietary code excerpts directly into the prompt or into `/tmp/codex-plan-context-$PPID.md`. The same privacy rules that apply to inline prompts apply equally to the context file. For sensitive plans, recommend `--no-search`.
+When `--search` is enabled (the default), do NOT paste secrets, tokens, API keys, or proprietary code excerpts directly into the prompt or into `/tmp/codex-plan-context-$INVOC_ID.md`. The same privacy rules that apply to inline prompts apply equally to the context file. For sensitive plans, recommend `--no-search`.
 
 ## Temp File Convention
 
-All temp files use `$PPID` (parent PID = the Claude Code process) for session-unique naming. `$PPID` is stable across all Bash tool calls within a session and unique across concurrent sessions. If Anthropic changes Claude Code's process model and `$PPID` stops being stable, migrate to `mktemp -d` approach.
+Per the shared codex-execution-protocol, use `INVOC_ID` (`${PPID}-${RANDOM}`) for invocation-unique naming. This supports concurrent skill invocations within a session. Get the literal value first via `INVOC_ID="${PPID}-${RANDOM}"; echo "INVOC_ID=$INVOC_ID"`, then use that literal in all file paths. `$PPID` is stable across all Bash tool calls within a session and unique across concurrent sessions. If Anthropic changes Claude Code's process model and `$PPID` stops being stable, migrate to `mktemp -d` approach.
 
 ## Step 0: Preflight Check
 
 Run once at skill start:
 
 ```bash
-rm -f /tmp/codex-version-$PPID.log
-codex --version > /tmp/codex-version-$PPID.log 2>&1; EC=$?; echo "Exit code: $EC"
+rm -f /tmp/codex-version-$INVOC_ID.log
+codex --version > /tmp/codex-version-$INVOC_ID.log 2>&1; EC=$?; echo "Exit code: $EC"
 ```
 
 - Exit code 0: Codex is available, proceed.
-- Exit code non-zero or "command not found": Read `/tmp/codex-version-$PPID.log`, report the error, and stop.
+- Exit code non-zero or "command not found": Read `/tmp/codex-version-$INVOC_ID.log`, report the error, and stop.
 
 ## Plan Review Protocol
 
-1. **Write the context file** using the Write tool (not Bash) to `/tmp/codex-plan-context-$PPID.md` with:
+1. **Write the context file** using the Write tool (not Bash) to `/tmp/codex-plan-context-$INVOC_ID.md` with:
    - The user's original request
    - The full plan text
    - Specific questions Claude Code has (decision trade-offs, alternative approaches, concerns)
 
    Use the format described in "Context File Format" below.
 
-2. **If the Write tool fails** (permission error, disk full, etc.): fall back to a compact inline prompt containing just the plan summary and key questions (not the full plan text). Report the file-write failure to the user.
+2. **If the Write tool fails** (permission error, disk full, etc.): stop with error and report the file-write failure to the user. Do NOT fall back to an inline prompt — per the shared codex-execution-protocol, all prompts must go through files.
 
 3. Invoke Codex with a short prompt that references the context file
 4. Read and evaluate Codex's response
@@ -60,7 +62,7 @@ codex --version > /tmp/codex-version-$PPID.log 2>&1; EC=$?; echo "Exit code: $EC
 
 ## Context File Format
 
-The context file written to `/tmp/codex-plan-context-$PPID.md` uses stable section headers that Codex can parse:
+The context file written to `/tmp/codex-plan-context-$INVOC_ID.md` uses stable section headers that Codex can parse:
 
 ```markdown
 # Plan Review Context
@@ -77,17 +79,19 @@ The context file written to `/tmp/codex-plan-context-$PPID.md` uses stable secti
 
 ## Invocation
 
+**Prompt-file protocol exception:** The shared codex-execution-protocol requires prompts to go through files. codex-plan uses a hybrid approach: the substantive plan content goes through the context file (`/tmp/codex-plan-context-$INVOC_ID.md`), but the review instructions are passed inline. This is acceptable because the inline portion is a static template (not user-varying content) and the plan data already follows the prompt-file protocol. The context file is the authoritative input; the inline prompt is just the review framework.
+
 **Pre-invocation cleanup** (output files only — do NOT delete context file):
 ```bash
-rm -f /tmp/codex-plan-$PPID.txt /tmp/codex-plan-$PPID.err
+rm -f /tmp/codex-plan-$INVOC_ID.txt /tmp/codex-plan-$INVOC_ID.err
 ```
 
 ### With web search (default):
 ```bash
 codex --model gpt-5.3-codex --search exec --sandbox read-only --full-auto \
   -C /Users/keithmckenzie/Projects/rgbw-lighting \
-  -o /tmp/codex-plan-$PPID.txt \
-  "You are reviewing an implementation plan created by Claude Code. Read the full plan context at /tmp/codex-plan-context-$PPID.md — it contains the user request, the proposed plan, and specific questions. Use the REQUIRED OUTPUT FORMAT specified below.
+  -o /tmp/codex-plan-$INVOC_ID.txt \
+  "You are reviewing an implementation plan created by Claude Code. Read the full plan context at /tmp/codex-plan-context-$INVOC_ID.md — it contains the user request, the proposed plan, and specific questions. Use the REQUIRED OUTPUT FORMAT specified below.
 
 PROJECT CONTEXT: PlatformIO monorepo — ESP32/ESP8266/AVR, C++17/C++11, Arduino framework, NeoPixelBus, ESP-DSP, FreeRTOS. Shared libraries in shared/lib/ (RGBWCommon, LEDStrip, LEDPWM, AudioInput, Connectivity), apps in apps/. See docs/ for full specs (led-control.md, audio-reactive.md, esp32-internals.md, coding-standards.md, pin-reference.md).
 
@@ -116,15 +120,15 @@ QUESTIONS_ANSWERED:
 - [Question]: [Codex's answer/recommendation]
 
 ALTERNATIVE_APPROACHES:
-- [If any significantly better approach exists, describe it]" 2>/tmp/codex-plan-$PPID.err; EC=$?; echo "Exit code: $EC"
+- [If any significantly better approach exists, describe it]" 2>/tmp/codex-plan-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 ### Without web search (`--no-search`):
 ```bash
 codex --model gpt-5.3-codex exec --sandbox read-only --full-auto \
   -C /Users/keithmckenzie/Projects/rgbw-lighting \
-  -o /tmp/codex-plan-$PPID.txt \
-  "You are reviewing an implementation plan created by Claude Code. Read the full plan context at /tmp/codex-plan-context-$PPID.md — it contains the user request, the proposed plan, and specific questions. Use the REQUIRED OUTPUT FORMAT specified below.
+  -o /tmp/codex-plan-$INVOC_ID.txt \
+  "You are reviewing an implementation plan created by Claude Code. Read the full plan context at /tmp/codex-plan-context-$INVOC_ID.md — it contains the user request, the proposed plan, and specific questions. Use the REQUIRED OUTPUT FORMAT specified below.
 
 PROJECT CONTEXT: PlatformIO monorepo — ESP32/ESP8266/AVR, C++17/C++11, Arduino framework, NeoPixelBus, ESP-DSP, FreeRTOS. Shared libraries in shared/lib/ (RGBWCommon, LEDStrip, LEDPWM, AudioInput, Connectivity), apps in apps/. See docs/ for full specs (led-control.md, audio-reactive.md, esp32-internals.md, coding-standards.md, pin-reference.md).
 
@@ -153,7 +157,7 @@ QUESTIONS_ANSWERED:
 - [Question]: [Codex's answer/recommendation]
 
 ALTERNATIVE_APPROACHES:
-- [If any significantly better approach exists, describe it]" 2>/tmp/codex-plan-$PPID.err; EC=$?; echo "Exit code: $EC"
+- [If any significantly better approach exists, describe it]" 2>/tmp/codex-plan-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 Use the Bash tool's `run_in_background` parameter set to `true` (do NOT set `timeout`). This returns a task ID immediately, enabling parallel skill invocations (e.g., launching codex-plan and gemini-ask concurrently without waiting).
@@ -236,20 +240,20 @@ After reading Codex's response:
 
 ## After Invocation
 
-1. Read `/tmp/codex-plan-$PPID.txt` with the Read tool
+1. Read `/tmp/codex-plan-$INVOC_ID.txt` with the Read tool
 2. Evaluate Codex's response per the rules above
-3. If the file is empty or Codex exited non-zero, read `/tmp/codex-plan-$PPID.err` and report the error
+3. If the file is empty or Codex exited non-zero, read `/tmp/codex-plan-$INVOC_ID.err` and report the error
 4. **Post-use cleanup** — remove temp files to avoid leaking context:
    ```bash
-   rm -f /tmp/codex-plan-$PPID.txt /tmp/codex-plan-$PPID.err /tmp/codex-plan-context-$PPID.md
+   rm -f /tmp/codex-plan-$INVOC_ID.txt /tmp/codex-plan-$INVOC_ID.err /tmp/codex-plan-context-$INVOC_ID.md
    ```
 
 ## Error Handling
 
 | Scenario | Action |
 |----------|--------|
-| Context file write fails | Fall back to compact inline prompt (summary + key questions only), report failure to user |
-| Codex exits non-zero | Read `/tmp/codex-plan-$PPID.err`, report to user, proceed with plan as-is |
+| Context file write fails | Stop with error. Do NOT fall back to inline prompt. Report failure to user. |
+| Codex exits non-zero | Read `/tmp/codex-plan-$INVOC_ID.err`, report to user, proceed with plan as-is |
 | Output file empty | Report "Codex produced no output", proceed with plan as-is |
 | Stalled (no progress >20 min) | Check with `TaskOutput` (block: false). If still running, report to user, proceed with plan as-is |
 | Parse failure (no structured format) | Read raw text, extract key points manually, summarize for user |
@@ -266,22 +270,24 @@ After reading Codex's response:
 
 ## Codex -> Claude Code Mirror
 
+**Note:** Mirror commands use `claude` CLI which is not in this skill's allowed-tools. The mirror section is reference documentation for when Codex orchestrates Claude Code — it is not executed by this skill directly.
+
 If Codex is orchestrating plan review but you want Claude Code as the reviewer, use this non-interactive mirror.
 
 ### Preflight
 
 ```bash
-rm -f /tmp/claude-version-$PPID.log
-claude --version > /tmp/claude-version-$PPID.log 2>&1; EC=$?; echo "Exit code: $EC"
+rm -f /tmp/claude-version-$INVOC_ID.log
+claude --version > /tmp/claude-version-$INVOC_ID.log 2>&1; EC=$?; echo "Exit code: $EC"
 ```
 
 ### Invocation (review only, JSON)
 
 ```bash
-rm -f /tmp/claude-plan-$PPID.json /tmp/claude-plan-$PPID.err
+rm -f /tmp/claude-plan-$INVOC_ID.json /tmp/claude-plan-$INVOC_ID.err
 claude -p --permission-mode plan --output-format json --max-turns 1 \
-  "You are reviewing an implementation plan. Read /tmp/codex-plan-context-$PPID.md and return STRICT JSON with: assessment, key_improvements, questions_answered, alternative_approaches." \
-  > /tmp/claude-plan-$PPID.json 2>/tmp/claude-plan-$PPID.err; EC=$?; echo "Exit code: $EC"
+  "You are reviewing an implementation plan. Read /tmp/codex-plan-context-$INVOC_ID.md and return STRICT JSON with: assessment, key_improvements, questions_answered, alternative_approaches." \
+  > /tmp/claude-plan-$INVOC_ID.json 2>/tmp/claude-plan-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 ### Notes

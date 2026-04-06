@@ -1,7 +1,7 @@
 ---
 name: claude-review
 description: Run a Claude advisory review pass over current changes. Use for correctness, risk, and UX findings with file/line citations.
-allowed-tools: Read, Grep, Glob, Bash(claude *), Bash(git status *), Bash(git diff *), Bash(git ls-files *), Bash(rm -f /tmp/claude-review-*)
+allowed-tools: Read, Grep, Glob, Bash(claude *), Bash(echo *), Bash(INVOC_ID=*), Bash(git status *), Bash(git diff *), Bash(git ls-files *), Bash(rm -f /tmp/claude-review-*)
 ---
 
 # Claude Advisory Review
@@ -28,7 +28,7 @@ If no changes are present, report "No changes to review" and stop unless user ex
 
 ## Temp File Convention
 
-All temp files use `$PPID` for session-unique naming.
+Use `INVOC_ID` (`${PPID}-${RANDOM}`) for invocation-unique naming. This supports concurrent skill invocations within a session. Get the literal value first via `INVOC_ID="${PPID}-${RANDOM}"; echo "INVOC_ID=$INVOC_ID"`, then use that literal in all file paths. The Read tool does not expand shell variables — use the numeric literal in Read paths. Fallback: `mktemp -d` if process model changes.
 
 ## Preflight
 
@@ -47,10 +47,10 @@ claude -p --permission-mode plan --output-format text --max-turns 1 \
 ### JSON-file mode (`--json-file`)
 
 ```bash
-rm -f /tmp/claude-review-$PPID.json /tmp/claude-review-$PPID.err
+rm -f /tmp/claude-review-$INVOC_ID.json /tmp/claude-review-$INVOC_ID.err
 claude -p --permission-mode plan --output-format json --max-turns 1 \
   "Review the current diff and return STRICT JSON with keys: summary, issues, verdict, confidence, agreement_targets." \
-  > /tmp/claude-review-$PPID.json 2>/tmp/claude-review-$PPID.err; EC=$?; echo "Exit code: $EC"
+  > /tmp/claude-review-$INVOC_ID.json 2>/tmp/claude-review-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 Use the Bash tool's `run_in_background` parameter set to `true` (do NOT set `timeout`) in `--json-file` mode only.
@@ -64,13 +64,13 @@ Use the Bash tool's `run_in_background` parameter set to `true` (do NOT set `tim
 
 ### For `--json-file` mode
 
-1. Get literal PPID value: `echo $PPID`
-2. Read `/tmp/claude-review-<PPID>.json`
+1. Get literal INVOC_ID value (from the preflight step)
+2. Read `/tmp/claude-review-<INVOC_ID>.json`
 3. Validate JSON and summarize findings
-4. On failure, read `/tmp/claude-review-<PPID>.err`
+4. On failure, read `/tmp/claude-review-<INVOC_ID>.err`
 5. Cleanup:
    ```bash
-   rm -f /tmp/claude-review-$PPID.json /tmp/claude-review-$PPID.err
+   rm -f /tmp/claude-review-$INVOC_ID.json /tmp/claude-review-$INVOC_ID.err
    ```
 
 ## Error Handling

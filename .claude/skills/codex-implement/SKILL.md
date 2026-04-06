@@ -1,10 +1,12 @@
 ---
 name: codex-implement
 description: Have Codex write code to implement a feature or change. Use when user says "have Codex implement", "Codex build", "let Codex write", "Codex code this", or when Claude Code has a plan and wants Codex to write the code. Also use for hard algorithmic/architectural problems where Codex's fresh-context advantage matters most.
-allowed-tools: Read, Write, Grep, Glob, Bash(echo *), Bash(codex --version *), Bash(codex --model gpt-5.3-codex --search exec --profile claude-full *), Bash(codex --model gpt-5.3-codex exec --profile claude-full *), Bash(cat *), Bash(git diff *), Bash(git status *), Bash(git ls-files *), Bash(rm -f /tmp/codex-*), Bash(grep *), Bash(pio run *), Bash(pio test *)
+allowed-tools: Read, Write, Grep, Glob, Bash(echo *), Bash(codex --version *), Bash(codex --model gpt-5.3-codex --search exec --profile claude-full *), Bash(codex --model gpt-5.3-codex exec --profile claude-full *), Bash(cat *), Bash(git diff *), Bash(git status *), Bash(git ls-files *), Bash(INVOC_ID=*), Bash(rm -f /tmp/codex-impl-*), Bash(rm -f /tmp/codex-version-*), Bash(grep *), Bash(pio run *), Bash(pio test *)
 ---
 
 # Codex Implementation
+
+**Shared protocol:** Read `.claude/skills/shared/codex-execution-protocol.md` for lifecycle steps and canonical fragments (FRAG-CONVENTIONS, FRAG-NOTOUCHZONES, FRAG-VALIDATORS, FRAG-VERIFICATION, FRAG-BSOS, FRAG-IMPROVEMENT-CORE). Read `.claude/skills/shared/codex-antipatterns.md` for failure modes to avoid.
 
 Have Codex write code for planned features, changes, or refactors.
 
@@ -44,13 +46,13 @@ When `--search` is enabled, do NOT paste secrets or proprietary code into the pr
 
 ## Temp File Convention
 
-All temp files use `$PPID` (parent PID = Claude Code process) for session-unique naming. Fallback: `mktemp -d` if process model changes.
+Per the shared codex-execution-protocol, use `INVOC_ID` (`${PPID}-${RANDOM}`) for invocation-unique naming. This supports concurrent skill invocations within a session. Get the literal value first via `INVOC_ID="${PPID}-${RANDOM}"; echo "INVOC_ID=$INVOC_ID"`, then use that literal in all file paths. Fallback: `mktemp -d` if process model changes.
 
 ## Step 0: Preflight Check
 
 ```bash
-rm -f /tmp/codex-version-$PPID.log
-codex --version > /tmp/codex-version-$PPID.log 2>&1; EC=$?; echo "Exit code: $EC"
+rm -f /tmp/codex-version-$INVOC_ID.log
+codex --version > /tmp/codex-version-$INVOC_ID.log 2>&1; EC=$?; echo "Exit code: $EC"
 ```
 
 Exit 0: proceed. Non-zero: read log, report error, stop.
@@ -85,11 +87,11 @@ Wait for user confirmation before proceeding.
 
 ## Step 2: Build the Implementation Brief
 
-This is Claude Code's most important contribution. Write to `/tmp/codex-impl-context-$PPID.md` using the Write tool (not Bash).
+This is Claude Code's most important contribution. Write to `/tmp/codex-impl-context-$INVOC_ID.md` using the Write tool (not Bash).
 
-**$PPID note:** The Write tool doesn't expand `$PPID`. Get the literal value first via `echo $PPID` in Bash, then use that value in the Write tool file path.
+**INVOC_ID note:** The Write tool doesn't expand shell variables. Get the literal INVOC_ID value first via the preflight step, then use that literal in Write tool file paths.
 
-**If Write fails:** fall back to compact inline prompt (objective + scope/no-touch with tiers + hard constraints + acceptance criteria + evidence/context). Report failure.
+**If Write fails:** stop with error and report the failure to the user. Do NOT fall back to an inline prompt — per the shared codex-execution-protocol, all prompts must go through files.
 
 ### Brief Format
 
@@ -190,25 +192,27 @@ For hard problems, Claude Code may include **prior attempts as non-binding evide
 
 ## Step 3: Invoke Codex
 
+**Prompt-file protocol exception:** The shared codex-execution-protocol requires prompts to go through files. codex-implement uses a hybrid approach: the substantive implementation brief goes through the context file (`/tmp/codex-impl-context-$INVOC_ID.md`), and the inline prompt is a static template that instructs Codex to read that context file. The context file is the authoritative input; the inline portion is just the constraint/verification framework.
+
 **Pre-invocation cleanup** (output files only — do NOT delete context file):
 ```bash
-rm -f /tmp/codex-impl-$PPID.txt /tmp/codex-impl-$PPID.err
+rm -f /tmp/codex-impl-$INVOC_ID.txt /tmp/codex-impl-$INVOC_ID.err
 ```
 
 ### Default (no web search):
 ```bash
 codex --model gpt-5.3-codex exec --profile claude-full \
   -C /Users/keithmckenzie/Projects/rgbw-lighting \
-  -o /tmp/codex-impl-$PPID.txt \
-  "<PROMPT>" 2>/tmp/codex-impl-$PPID.err; EC=$?; echo "Exit code: $EC"
+  -o /tmp/codex-impl-$INVOC_ID.txt \
+  "<PROMPT>" 2>/tmp/codex-impl-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 ### With web search (`--search`):
 ```bash
 codex --model gpt-5.3-codex --search exec --profile claude-full \
   -C /Users/keithmckenzie/Projects/rgbw-lighting \
-  -o /tmp/codex-impl-$PPID.txt \
-  "<PROMPT>" 2>/tmp/codex-impl-$PPID.err; EC=$?; echo "Exit code: $EC"
+  -o /tmp/codex-impl-$INVOC_ID.txt \
+  "<PROMPT>" 2>/tmp/codex-impl-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 **Invariant:** The prompt body (`<PROMPT>`) must be byte-identical between variants; only `--search` before `exec` differs.
@@ -216,7 +220,7 @@ codex --model gpt-5.3-codex --search exec --profile claude-full \
 ### Runtime Prompt (`<PROMPT>`)
 
 ```
-You are implementing code as part of a team. Claude Code wrote the plan; your job is to write great code. Read the implementation brief at /tmp/codex-impl-context-$PPID.md. The brief specifies WHAT must be true when done. You own the HOW — choose the best implementation approach.
+You are implementing code as part of a team. Claude Code wrote the plan; your job is to write great code. Read the implementation brief at /tmp/codex-impl-context-$INVOC_ID.md. The brief specifies WHAT must be true when done. You own the HOW — choose the best implementation approach.
 
 This is a PlatformIO embedded project. See docs/coding-standards.md for full conventions.
 PROJECT: PlatformIO monorepo — ESP32 (C++17), ESP8266 (C++11), AVR (C++11). Arduino framework, NeoPixelBus, ESP-DSP, FreeRTOS.
@@ -286,7 +290,7 @@ Before reading the output file, call `TaskOutput` with the task ID (`block: true
 
 ## Step 4: After Codex Finishes
 
-1. **Read** `/tmp/codex-impl-$PPID.txt` with the Read tool
+1. **Read** `/tmp/codex-impl-$INVOC_ID.txt` with the Read tool
 2. **Review the diff:** `git diff` and `git status -sb`
 3. **Validate acceptance criteria** against Codex's self-assessment
 4. **Verification gate:**
@@ -321,7 +325,7 @@ Before reading the output file, call `TaskOutput` with the task ID (`block: true
 ## Step 5: Cleanup
 
 ```bash
-rm -f /tmp/codex-impl-$PPID.txt /tmp/codex-impl-$PPID.err /tmp/codex-impl-context-$PPID.md /tmp/codex-version-$PPID.log
+rm -f /tmp/codex-impl-$INVOC_ID.txt /tmp/codex-impl-$INVOC_ID.err /tmp/codex-impl-context-$INVOC_ID.md /tmp/codex-version-$INVOC_ID.log
 ```
 
 ## Multi-Slice Implementation
@@ -355,8 +359,8 @@ For larger features, Claude Code breaks work into slices. Each slice gets its ow
 
 | Scenario | Action |
 |----------|--------|
-| Context file write fails | Fall back to inline prompt (objective + scope/no-touch with tiers + hard constraints + acceptance criteria + evidence/context), report failure |
-| Codex exits non-zero | Read `/tmp/codex-impl-$PPID.err`, report to user |
+| Context file write fails | Stop with error. Do NOT fall back to inline prompt. Report failure to user. |
+| Codex exits non-zero | Read `/tmp/codex-impl-$INVOC_ID.err`, report to user |
 | Output file empty | Report "Codex produced no output", show stderr |
 | Stalled (no progress >20 min) | Check with `TaskOutput` (block: false). If still running, report to user, suggest narrower scope or splitting into slices |
 | Codex not installed | Report "Codex CLI not found. Install it first." |
@@ -382,22 +386,24 @@ For larger features, Claude Code breaks work into slices. Each slice gets its ow
 
 ## Codex -> Claude Code Mirror
 
+**Note:** Mirror commands use `claude` CLI which is not in this skill's allowed-tools. The mirror section is reference documentation for when Codex orchestrates Claude Code — it is not executed by this skill directly.
+
 If Codex is orchestrating implementation but you want Claude Code to perform the coding pass, use this mirror.
 
 ### Preflight
 
 ```bash
-rm -f /tmp/claude-version-$PPID.log
-claude --version > /tmp/claude-version-$PPID.log 2>&1; EC=$?; echo "Exit code: $EC"
+rm -f /tmp/claude-version-$INVOC_ID.log
+claude --version > /tmp/claude-version-$INVOC_ID.log 2>&1; EC=$?; echo "Exit code: $EC"
 ```
 
 ### Invocation (edit-capable, JSON)
 
 ```bash
-rm -f /tmp/claude-impl-$PPID.json /tmp/claude-impl-$PPID.err
+rm -f /tmp/claude-impl-$INVOC_ID.json /tmp/claude-impl-$INVOC_ID.err
 claude -p --permission-mode acceptEdits --output-format json \
-  "Read /tmp/codex-impl-context-$PPID.md and implement the brief. Return STRICT JSON with files_changed, files_created, acceptance_criteria_status, assumptions, unresolved, risks, verification." \
-  > /tmp/claude-impl-$PPID.json 2>/tmp/claude-impl-$PPID.err; EC=$?; echo "Exit code: $EC"
+  "Read /tmp/codex-impl-context-$INVOC_ID.md and implement the brief. Return STRICT JSON with files_changed, files_created, acceptance_criteria_status, assumptions, unresolved, risks, verification." \
+  > /tmp/claude-impl-$INVOC_ID.json 2>/tmp/claude-impl-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 ### Notes

@@ -1,10 +1,12 @@
 ---
 name: codex-fix
 description: Let Codex directly edit files to fix bugs. Use when user says "let Codex fix", "Codex fix this", "have Codex debug", or wants Codex to fix a specific bug. For feature implementation, use codex-implement instead.
-allowed-tools: Read, Write, Grep, Glob, Bash(echo *), Bash(codex --model gpt-5.3-codex exec --profile codex-fix-restricted *), Bash(codex --model gpt-5.3-codex --search exec --profile codex-fix-restricted *), Bash(codex --model gpt-5.3-codex exec --profile claude-full *), Bash(codex --model gpt-5.3-codex --search exec --profile claude-full *), Bash(cat *), Bash(git diff *), Bash(git status *), Bash(git ls-files *), Bash(rm -f /tmp/codex-*), Bash(grep *), Bash(pio run *), Bash(pio test *)
+allowed-tools: Read, Write, Grep, Glob, Bash(echo *), Bash(codex --model gpt-5.3-codex exec --profile codex-fix-restricted *), Bash(codex --model gpt-5.3-codex --search exec --profile codex-fix-restricted *), Bash(codex --model gpt-5.3-codex exec --profile claude-full *), Bash(codex --model gpt-5.3-codex --search exec --profile claude-full *), Bash(cat *), Bash(git diff *), Bash(git status *), Bash(git ls-files *), Bash(INVOC_ID=*), Bash(rm -f /tmp/codex-fix-*), Bash(grep *), Bash(pio run *), Bash(pio test *)
 ---
 
 # Codex Direct Editing
+
+**Shared protocol:** Read `.claude/skills/shared/codex-execution-protocol.md` for lifecycle steps and canonical fragments (FRAG-CONVENTIONS, FRAG-NOTOUCHZONES, FRAG-VERIFICATION, FRAG-BSOS). Read `.claude/skills/shared/codex-antipatterns.md` for failure modes to avoid.
 
 Let Codex directly edit files to fix issues. Used when the user wants Codex to apply changes rather than just provide feedback.
 
@@ -40,7 +42,7 @@ When `--search` is enabled, do NOT paste secrets, tokens, API keys, or proprieta
 
 ## Temp File Convention
 
-All temp files use `$PPID` (parent PID = the Claude Code process) for session-unique naming. `$PPID` is stable across all Bash tool calls within a session and unique across concurrent sessions. If Anthropic changes Claude Code's process model and `$PPID` stops being stable, migrate to `mktemp -d` approach.
+Per the shared codex-execution-protocol, use `INVOC_ID` (`${PPID}-${RANDOM}`) for invocation-unique naming. This supports concurrent skill invocations within a session. Get the literal value first via `INVOC_ID="${PPID}-${RANDOM}"; echo "INVOC_ID=$INVOC_ID"`, then use that literal in all file paths. `$PPID` is stable across all Bash tool calls within a session and unique across concurrent sessions. If Anthropic changes Claude Code's process model and `$PPID` stops being stable, migrate to `mktemp -d` approach.
 
 ## Pre-Flight
 
@@ -95,11 +97,11 @@ Wait for user confirmation before proceeding.
 
 ## Step 1: Build Fix Brief
 
-Write to `/tmp/codex-fix-context-$PPID.md` using the Write tool (not Bash).
+Write to `/tmp/codex-fix-context-$INVOC_ID.md` using the Write tool (not Bash).
 
-**$PPID note:** The Write tool doesn't expand `$PPID`. Get the literal value first via `echo $PPID` in Bash, then use that value in the Write tool file path.
+**INVOC_ID note:** The Write tool doesn't expand shell variables. Get the literal INVOC_ID value first via the preflight step, then use that literal in Write tool file paths.
 
-**If Write fails:** fall back to compact inline prompt (objective + symptom + full evidence + scope + no-touch with tiers + acceptance checks). Report failure.
+**If Write fails:** stop with error and report the failure to the user. Do NOT fall back to an inline prompt — per the shared codex-execution-protocol, all prompts must go through files.
 
 Structure:
 
@@ -153,41 +155,43 @@ Format: `TIER: path — reason`
 
 ## Step 2: Invoke Codex
 
+**Prompt-file protocol exception:** The shared codex-execution-protocol requires prompts to go through files. codex-fix uses a hybrid approach: the substantive fix brief goes through the context file (`/tmp/codex-fix-context-$INVOC_ID.md`), and the inline prompt is a static template that instructs Codex to read that context file. The context file is the authoritative input; the inline portion is just the review/constraint framework.
+
 **Pre-invocation cleanup** (output/error files only — do NOT delete context file):
 ```bash
-rm -f /tmp/codex-fix-$PPID.txt /tmp/codex-fix-$PPID.err
+rm -f /tmp/codex-fix-$INVOC_ID.txt /tmp/codex-fix-$INVOC_ID.err
 ```
 
 ### Default (no web search, restricted profile):
 ```bash
 codex --model gpt-5.3-codex exec --profile codex-fix-restricted \
   -C /Users/keithmckenzie/Projects/rgbw-lighting \
-  -o /tmp/codex-fix-$PPID.txt \
-  "<PROMPT>" 2>/tmp/codex-fix-$PPID.err; EC=$?; echo "Exit code: $EC"
+  -o /tmp/codex-fix-$INVOC_ID.txt \
+  "<PROMPT>" 2>/tmp/codex-fix-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 ### With web search (`--search`):
 ```bash
 codex --model gpt-5.3-codex --search exec --profile codex-fix-restricted \
   -C /Users/keithmckenzie/Projects/rgbw-lighting \
-  -o /tmp/codex-fix-$PPID.txt \
-  "<PROMPT>" 2>/tmp/codex-fix-$PPID.err; EC=$?; echo "Exit code: $EC"
+  -o /tmp/codex-fix-$INVOC_ID.txt \
+  "<PROMPT>" 2>/tmp/codex-fix-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 ### Escalated (`--escalate`):
 ```bash
 codex --model gpt-5.3-codex exec --profile claude-full \
   -C /Users/keithmckenzie/Projects/rgbw-lighting \
-  -o /tmp/codex-fix-$PPID.txt \
-  "<PROMPT>" 2>/tmp/codex-fix-$PPID.err; EC=$?; echo "Exit code: $EC"
+  -o /tmp/codex-fix-$INVOC_ID.txt \
+  "<PROMPT>" 2>/tmp/codex-fix-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 ### Escalated with web search (`--escalate --search`):
 ```bash
 codex --model gpt-5.3-codex --search exec --profile claude-full \
   -C /Users/keithmckenzie/Projects/rgbw-lighting \
-  -o /tmp/codex-fix-$PPID.txt \
-  "<PROMPT>" 2>/tmp/codex-fix-$PPID.err; EC=$?; echo "Exit code: $EC"
+  -o /tmp/codex-fix-$INVOC_ID.txt \
+  "<PROMPT>" 2>/tmp/codex-fix-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 **Invariant:** The prompt body (`<PROMPT>`) must be byte-identical across all variants; only `--search` and `--profile` differ.
@@ -195,7 +199,7 @@ codex --model gpt-5.3-codex --search exec --profile claude-full \
 ### Runtime Prompt (`<PROMPT>`)
 
 ```
-Read the fix brief at /tmp/codex-fix-context-$PPID.md. It defines WHAT is broken and the acceptance checks. Determine HOW to fix it. Treat OPTIONAL HYPOTHESES as non-binding until verified.
+Read the fix brief at /tmp/codex-fix-context-$INVOC_ID.md. It defines WHAT is broken and the acceptance checks. Determine HOW to fix it. Treat OPTIONAL HYPOTHESES as non-binding until verified.
 
 This is a PlatformIO embedded project. See docs/coding-standards.md for conventions.
 PROJECT: PlatformIO monorepo — ESP32 (C++17), ESP8266 (C++11), AVR (C++11). Arduino framework, NeoPixelBus, ESP-DSP, FreeRTOS.
@@ -246,7 +250,7 @@ Note: No `--sandbox read-only` here — Codex needs write access to edit files. 
 
 ## Step 3: After Codex Finishes
 
-1. Read `/tmp/codex-fix-$PPID.txt` with the Read tool to see Codex's description of what it did
+1. Read `/tmp/codex-fix-$INVOC_ID.txt` with the Read tool to see Codex's description of what it did
 2. Run `git diff` to see what Codex changed in tracked files
 3. Run `git status -sb` to catch any newly created or deleted files
 4. **Verification gate — two-phase:**
@@ -257,11 +261,11 @@ Note: No `--sandbox read-only` here — Codex needs write access to edit files. 
      - **Skip for:** single-file fixes where Codex's focused checks PASSED and the fix is clearly narrow
    - Full verification commands:
      ```bash
-     cd /Users/keithmckenzie/Projects/rgbw-lighting/apps/<app-name> && pio run 2>&1 > /tmp/pio.log; EC=$?; echo "Exit code: $EC"; head -80 /tmp/pio.log; echo "..."; tail -80 /tmp/pio.log
+     cd /Users/keithmckenzie/Projects/rgbw-lighting/apps/<app-name> && pio run > /tmp/pio.log 2>&1; EC=$?; echo "Exit code: $EC"; head -80 /tmp/pio.log; echo "..."; tail -80 /tmp/pio.log
      ```
      If tests exist:
      ```bash
-     cd /Users/keithmckenzie/Projects/rgbw-lighting/apps/<app-name> && pio test -e native 2>&1 > /tmp/test.log; EC=$?; echo "Exit code: $EC"; head -80 /tmp/test.log; echo "..."; tail -80 /tmp/test.log
+     cd /Users/keithmckenzie/Projects/rgbw-lighting/apps/<app-name> && pio test -e native > /tmp/test.log 2>&1; EC=$?; echo "Exit code: $EC"; head -80 /tmp/test.log; echo "..."; tail -80 /tmp/test.log
      ```
 5. **BETTER_SOLUTION_OUTSIDE_SCOPE triage** (if present in Codex output):
    - **Auto-accept** when: no HARD no-touch files involved, low blast radius (same library), no API contract change
@@ -276,15 +280,15 @@ Note: No `--sandbox read-only` here — Codex needs write access to edit files. 
 8. **Do NOT revert changes without explicit user approval and user-specified command** — reverting requires prohibited git commands (`git checkout --`, `git restore`), so only the user can authorize and execute this
 9. **Post-use cleanup** — remove all temp files to avoid leaking context:
    ```bash
-   rm -f /tmp/codex-fix-$PPID.txt /tmp/codex-fix-$PPID.err /tmp/codex-fix-context-$PPID.md
+   rm -f /tmp/codex-fix-$INVOC_ID.txt /tmp/codex-fix-$INVOC_ID.err /tmp/codex-fix-context-$INVOC_ID.md
    ```
 
 ## Error Handling
 
 | Scenario | Action |
 |----------|--------|
-| Context file write fails | Fall back to compact inline prompt (objective + symptom + full evidence + scope + no-touch with tiers + acceptance checks), report failure |
-| Codex exits non-zero | Read `/tmp/codex-fix-$PPID.err`, report to user |
+| Context file write fails | Stop with error. Do NOT fall back to inline prompt. Report failure to user. |
+| Codex exits non-zero | Read `/tmp/codex-fix-$INVOC_ID.err`, report to user |
 | Output file empty | Report "Codex produced no output", show stderr |
 | Sandbox limit hit | Codex fails cleanly (fail-closed). Report: "Codex hit sandbox limit under `workspace-write`. Re-invoke with `--escalate` to use `claude-full` profile, or ask user to run the blocked command locally." Do NOT suggest narrowing acceptance checks — that weakens verification. |
 | Stalled (no progress >20 min) | Check with `TaskOutput` (block: false). If still running, report to user, suggest narrower scope |
@@ -316,22 +320,24 @@ Note: No `--sandbox read-only` here — Codex needs write access to edit files. 
 
 ## Codex -> Claude Code Mirror
 
+**Note:** Mirror commands use `claude` CLI which is not in this skill's allowed-tools. The mirror section is reference documentation for when Codex orchestrates Claude Code — it is not executed by this skill directly.
+
 If Codex is orchestrating bug-fix flow but you want Claude Code to perform the fix pass, use this mirror.
 
 ### Preflight
 
 ```bash
-rm -f /tmp/claude-version-$PPID.log
-claude --version > /tmp/claude-version-$PPID.log 2>&1; EC=$?; echo "Exit code: $EC"
+rm -f /tmp/claude-version-$INVOC_ID.log
+claude --version > /tmp/claude-version-$INVOC_ID.log 2>&1; EC=$?; echo "Exit code: $EC"
 ```
 
 ### Invocation (fix mode, JSON)
 
 ```bash
-rm -f /tmp/claude-fix-$PPID.json /tmp/claude-fix-$PPID.err
+rm -f /tmp/claude-fix-$INVOC_ID.json /tmp/claude-fix-$INVOC_ID.err
 claude -p --permission-mode acceptEdits --output-format json \
-  "Read /tmp/codex-fix-context-$PPID.md, fix the issue, run only brief-defined acceptance checks, and return STRICT JSON with files_changed, verification, assumptions, constraint_conflicts, better_solution_outside_scope, reuse_decisions." \
-  > /tmp/claude-fix-$PPID.json 2>/tmp/claude-fix-$PPID.err; EC=$?; echo "Exit code: $EC"
+  "Read /tmp/codex-fix-context-$INVOC_ID.md, fix the issue, run only brief-defined acceptance checks, and return STRICT JSON with files_changed, verification, assumptions, constraint_conflicts, better_solution_outside_scope, reuse_decisions." \
+  > /tmp/claude-fix-$INVOC_ID.json 2>/tmp/claude-fix-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 ### Notes

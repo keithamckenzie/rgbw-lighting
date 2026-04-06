@@ -1,10 +1,12 @@
 ---
 name: gemini-vision
 description: Use Gemini to interpret a screenshot or mockup and produce implementation guidance. Use when the user provides an image or asks to build UI from a visual.
-allowed-tools: Read, Bash(gemini *), Bash(ls *), Bash(rm -f /tmp/gemini-*)
+allowed-tools: Read, Write, Bash(gemini *), Bash(echo *), Bash(INVOC_ID=*), Bash(ls *), Bash(rm -f /tmp/gemini-vision-*)
 ---
 
 # Gemini Vision (Advisory)
+
+**Shared protocol:** Read `.claude/skills/shared/gemini-execution-protocol.md` for lifecycle steps and canonical fragments (GFRAG-ROLE, GFRAG-INTENT-BLOCK, GFRAG-CONFIDENCE). Read `.claude/skills/shared/gemini-antipatterns.md` for failure modes to avoid.
 
 Convert a mockup or screenshot into structured implementation guidance. Do not edit files.
 
@@ -15,15 +17,15 @@ Convert a mockup or screenshot into structured implementation guidance. Do not e
 
 ## Image Syntax
 
-Use file-path references inside the prompt:
+Reference image files by path inside the prompt file content. The prompt file (not inline `-p`) passes the image path to Gemini:
 
-```bash
-gemini -m gemini-3.1-pro-preview --include-directories /tmp -p "Analyze the UI in ./screenshot.png"
+```
+Analyze the UI in ./screenshot.png
 ```
 
 ## Temp File Convention
 
-All temp files use `$PPID` (parent PID = the Claude Code process) for session-unique naming. `$PPID` is stable across all Bash tool calls within a session and unique across concurrent sessions. If Anthropic changes Claude Code's process model and `$PPID` stops being stable, migrate to `mktemp -d` approach. The Read tool does not expand `$PPID` — get the literal value via `echo $PPID` first, then use the numeric path in Read.
+Per the shared gemini-execution-protocol, use `INVOC_ID` (`${PPID}-${RANDOM}`) for invocation-unique naming. This supports concurrent skill invocations within a session. Get the literal value first via `INVOC_ID="${PPID}-${RANDOM}"; echo "INVOC_ID=$INVOC_ID"`, then use that literal in all file paths. The Read tool does not expand shell variables — use the numeric literal in Read paths. Fallback: `mktemp -d` if process model changes.
 
 ## Preflight
 
@@ -46,15 +48,17 @@ All temp files use `$PPID` (parent PID = the Claude Code process) for session-un
 
 ## Invocation
 
+**Write the prompt content to the prompt file via Write tool or Bash heredoc before invoking.** The prompt file path is `/tmp/gemini-vision-prompt-$INVOC_ID.md`.
+
 ### JSON-file mode (`--json-file`)
 
 **Pre-invocation cleanup** (prevents stale reads from prior runs):
 ```bash
-rm -f /tmp/gemini-vision-$PPID.json /tmp/gemini-vision-$PPID.err
+rm -f /tmp/gemini-vision-$INVOC_ID.json /tmp/gemini-vision-$INVOC_ID.err
 ```
 
 ```bash
-gemini --approval-mode plan -m gemini-3.1-pro-preview --include-directories /tmp --output-format json -p "PROMPT" > /tmp/gemini-vision-$PPID.json 2>/tmp/gemini-vision-$PPID.err; EC=$?; echo "Exit code: $EC"
+gemini --approval-mode plan -m gemini-3.1-pro-preview --include-directories /tmp --include-directories $HOME/.claude/plans --output-format json -p "Read the prompt at /tmp/gemini-vision-prompt-$INVOC_ID.md and follow it exactly." > /tmp/gemini-vision-$INVOC_ID.json 2>/tmp/gemini-vision-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 Use the Bash tool's `run_in_background` parameter set to `true` (do NOT set `timeout`) in `json-file` mode. This returns a task ID immediately, enabling parallel skill invocations (e.g., launching gemini-vision and other skills concurrently without waiting).
@@ -65,7 +69,7 @@ Before reading the output file, call `TaskOutput` with the task ID (`block: true
 
 Run in foreground and return stdout directly to the user:
 ```bash
-gemini --approval-mode plan -m gemini-3.1-pro-preview --include-directories /tmp --output-format text -p "PROMPT"
+gemini --approval-mode plan -m gemini-3.1-pro-preview --include-directories /tmp --include-directories $HOME/.claude/plans --output-format text -p "Read the prompt at /tmp/gemini-vision-prompt-$INVOC_ID.md and follow it exactly."
 ```
 
 Do not redirect stdout in inline mode.
@@ -144,13 +148,12 @@ Do not ask to create/write files.
 
 ### For `--json-file` mode
 
-1. Get the literal PPID value: `echo $PPID`
-2. Read `/tmp/gemini-vision-<PPID>.json` with the Read tool (using the numeric value)
-3. Validate JSON and extract implementation guidance
-4. If the file is empty or Gemini exited non-zero, read `/tmp/gemini-vision-<PPID>.err` and report the error
-5. **Post-use cleanup** — remove temp files to avoid leaking context:
+1. Read `/tmp/gemini-vision-<INVOC_ID>.json` with the Read tool (using the literal value from preflight)
+2. Validate JSON and extract implementation guidance
+3. If the file is empty or Gemini exited non-zero, read `/tmp/gemini-vision-<INVOC_ID>.err` and report the error
+4. **Post-use cleanup** — remove temp files to avoid leaking context:
    ```bash
-   rm -f /tmp/gemini-vision-$PPID.json /tmp/gemini-vision-$PPID.err
+   rm -f /tmp/gemini-vision-prompt-$INVOC_ID.md /tmp/gemini-vision-$INVOC_ID.json /tmp/gemini-vision-$INVOC_ID.err
    ```
 
 ### For inline mode
@@ -163,7 +166,7 @@ Do not ask to create/write files.
 | Scenario | Action |
 | --- | --- |
 | `--approval-mode plan` unavailable | Stop, ask user to enable `experimental.plan`, do not auto-fallback to `--yolo` |
-| Non-zero exit | Read `/tmp/gemini-vision-<PPID>.err`, report error, stop |
+| Non-zero exit | Read `/tmp/gemini-vision-<INVOC_ID>.err`, report error, stop |
 | Empty output | Report "Gemini produced no output", show stderr |
 | Invalid JSON | Report parse failure and show raw output |
 | Stalled (no progress >20 min) | Check with `TaskOutput` (block: false). If still running, report to user, suggest smaller image or narrower scope |

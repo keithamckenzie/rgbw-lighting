@@ -1,10 +1,12 @@
 ---
 name: codex-review
 description: Run a collaborative code review loop between Claude Code and Codex CLI. Use when the user asks to "review with Codex", "Codex review", "two-agent review", or "iterate with Codex".
-allowed-tools: Read, Grep, Glob, Bash(codex *), Bash(git status *), Bash(git diff *), Bash(git ls-files *), Bash(git rev-parse *), Bash(git symbolic-ref *), Bash(rm -f /tmp/codex-*)
+allowed-tools: Read, Grep, Glob, Bash(codex *), Bash(echo *), Bash(INVOC_ID=*), Bash(git status *), Bash(git diff *), Bash(git ls-files *), Bash(git rev-parse *), Bash(git symbolic-ref *), Bash(rm -f /tmp/codex-review-*), Bash(rm -f /tmp/codex-version-*)
 ---
 
 # Codex Collaborative Review Loop
+
+**Shared protocol:** Read `.claude/skills/shared/codex-execution-protocol.md` for lifecycle steps and canonical fragments. Read `.claude/skills/shared/codex-antipatterns.md` for failure modes to avoid. Route disputed findings through `/review-findings` (see `.claude/skills/shared/claude-triage-antipatterns.md` for triage self-checks).
 
 Codex reviews and fixes, Claude Code orchestrates and integrates — repeat until convergence. Codex has the coding edge; default to letting Codex fix any valid issues directly rather than Claude Code rewriting manually.
 
@@ -28,19 +30,19 @@ When `--search` is enabled (the default), do NOT paste secrets, tokens, API keys
 
 ## Temp File Convention
 
-All temp files use `$PPID` (parent PID = the Claude Code process) for session-unique naming. `$PPID` is stable across all Bash tool calls within a session and unique across concurrent sessions. Per-round files use `r{N}` in the name (e.g., `/tmp/codex-r1-$PPID.txt`). If Anthropic changes Claude Code's process model and `$PPID` stops being stable, migrate to `mktemp -d` approach.
+Per the shared codex-execution-protocol, use `INVOC_ID` (`${PPID}-${RANDOM}`) for invocation-unique naming. This supports concurrent skill invocations within a session. Get the literal value first via `INVOC_ID="${PPID}-${RANDOM}"; echo "INVOC_ID=$INVOC_ID"`, then use that literal in all file paths. Per-round files use `r{N}` in the name (e.g., `/tmp/codex-review-r1-$INVOC_ID.txt`). Fallback: `mktemp -d` if process model changes.
 
 ## Step 0: Preflight Check
 
 Run once at skill start:
 
 ```bash
-rm -f /tmp/codex-version-$PPID.log
-codex --version > /tmp/codex-version-$PPID.log 2>&1; EC=$?; echo "Exit code: $EC"
+rm -f /tmp/codex-version-$INVOC_ID.log
+codex --version > /tmp/codex-version-$INVOC_ID.log 2>&1; EC=$?; echo "Exit code: $EC"
 ```
 
 - Exit code 0: Codex is available, proceed.
-- Exit code non-zero or "command not found": Read `/tmp/codex-version-$PPID.log` for the specific error (distinguishes install-missing from auth-failure from other issues), report to user, and stop.
+- Exit code non-zero or "command not found": Read `/tmp/codex-version-$INVOC_ID.log` for the specific error (distinguishes install-missing from auth-failure from other issues), report to user, and stop.
 
 ## Step 1: Scope Discovery
 
@@ -125,27 +127,29 @@ Diff commands vary by `--scope`:
 - `branch`: `git diff --shortstat $BASE...HEAD` + `git diff --name-only $BASE...HEAD`
 - `files`: `git diff --shortstat -- <paths>` + `git diff --cached --shortstat -- <paths>` + `git diff --name-only -- <paths>` + `git diff --cached --name-only -- <paths>` + `git ls-files --others --exclude-standard -- <paths>`
 
-**2. Invoke Codex** (session-unique temp files via `$PPID`, consistent `-C`, stderr capture):
+**Prompt-file protocol exception:** The shared codex-execution-protocol requires prompts to go through files. codex-review passes prompts inline because the prompt content varies per round (scope, diff summary, addressed issues, dismissed issues) and is composed at runtime by Claude Code. The prompt is not user-varying sensitive data — it is a generated review instruction. This is acceptable because the inline prompt is a structured template filled with git metadata, not arbitrary user input.
+
+**2. Invoke Codex** (invocation-unique temp files via `$INVOC_ID`, consistent `-C`, stderr capture):
 
 **Pre-round cleanup** (prevents stale reads from prior runs or rounds):
 ```bash
-rm -f /tmp/codex-r{N}-$PPID.txt /tmp/codex-r{N}-$PPID.err
+rm -f /tmp/codex-review-r{N}-$INVOC_ID.txt /tmp/codex-review-r{N}-$INVOC_ID.err
 ```
 
 Feedback mode:
 ```bash
 codex --model gpt-5.3-codex --search exec --sandbox read-only --full-auto \
   -C /Users/keithmckenzie/Projects/rgbw-lighting \
-  -o /tmp/codex-r{N}-$PPID.txt \
-  "PROMPT" 2>/tmp/codex-r{N}-$PPID.err; EC=$?; echo "Exit code: $EC"
+  -o /tmp/codex-review-r{N}-$INVOC_ID.txt \
+  "PROMPT" 2>/tmp/codex-review-r{N}-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 Edit mode:
 ```bash
 codex --model gpt-5.3-codex --search exec --full-auto \
   -C /Users/keithmckenzie/Projects/rgbw-lighting \
-  -o /tmp/codex-r{N}-$PPID.txt \
-  "PROMPT" 2>/tmp/codex-r{N}-$PPID.err; EC=$?; echo "Exit code: $EC"
+  -o /tmp/codex-review-r{N}-$INVOC_ID.txt \
+  "PROMPT" 2>/tmp/codex-review-r{N}-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 **Search flag rules:**
@@ -161,7 +165,7 @@ Before reading the output file, call `TaskOutput` with the task ID (`block: true
 Edit-mode prompt constraints (append to prompt):
 > Only edit files within the review scope. List all files you changed in your response. Do not create new files unless strictly required. Do not delete files.
 
-**3. Read** `/tmp/codex-r{N}-$PPID.txt` with Read tool.
+**3. Read** `/tmp/codex-review-r{N}-$INVOC_ID.txt` with Read tool.
 
 **4. Parse structured output** (see Parser Spec below).
 
@@ -178,7 +182,7 @@ Edit-mode prompt constraints (append to prompt):
 
 **9. Post-round cleanup** — remove temp files from this round:
 ```bash
-rm -f /tmp/codex-r{N}-$PPID.txt /tmp/codex-r{N}-$PPID.err
+rm -f /tmp/codex-review-r{N}-$INVOC_ID.txt /tmp/codex-review-r{N}-$INVOC_ID.err
 ```
 
 **10. After feedback is addressed** (by Codex directly or Claude Code), snapshot new round baseline:
@@ -207,15 +211,15 @@ MAX_ROUNDS reached, user stops, or convergence detected.
 
 ## Prompt Templates
 
+**DRY note:** The project context block below overlaps with `FRAG-CONVENTIONS` in the shared codex-execution-protocol. When assembling prompts, include `FRAG-CONVENTIONS` content from the shared protocol, then append the review-specific context (SCOPE, DIFF SUMMARY, CHECK FOR, OUTPUT FORMAT) from below. The architecture/LED/dashboard details below are review-specific expansions that supplement the shared fragment.
+
 ### Round 1 Prompt
 
 ```
 You are reviewing code in a collaborative loop with Claude Code.
 Your role: thorough, actionable code review.
 
-PROJECT: PlatformIO monorepo — ESP32 (C++17), ESP8266 (C++11), AVR (C++11). Arduino framework, NeoPixelBus, ESP-DSP, FreeRTOS.
-CONVENTIONS: shared libraries in shared/lib/, apps in apps/, no Arduino String class, no exceptions, pre-allocated buffers, enum class error codes.
-GOLD STANDARD: shared/lib/RGBWCommon/src/rgbw.cpp (color math), shared/lib/LEDStrip/src/led_strip.cpp (driver template).
+[Include FRAG-CONVENTIONS from shared/codex-execution-protocol.md]
 ARCHITECTURE: shared/lib/RGBWCommon (color math, types) → shared/lib/LEDStrip (addressable NeoPixelBus driver) + shared/lib/LEDPWM (MOSFET PWM channels). shared/lib/AudioInput (I2S DMA + ESP-DSP FFT, ESP32 only). shared/lib/Connectivity (WiFi/BLE, ESP32 only).
 LED PROTOCOLS: SK6812 RGBW (4-channel, 5V, 800kHz NRZ), WS2815B RGB (3-channel, 12V, 800kHz NRZ), 24V non-addressable via MOSFET PWM.
 DASHBOARD: Tauri desktop app (Svelte 5 + TypeScript + Tailwind) in tools/dashboard/.
@@ -327,7 +331,7 @@ When Claude Code and Codex disagree on an issue:
 
 | Scenario | Action |
 |----------|--------|
-| Codex exits non-zero | Read `/tmp/codex-r{N}-$PPID.err`, report to user |
+| Codex exits non-zero | Read `/tmp/codex-review-r{N}-$INVOC_ID.err`, report to user |
 | Output file empty | Report "Codex produced no output", show stderr, do not retry |
 | Stalled (no progress >20 min) | Check with `TaskOutput` (block: false). If still running, report to user, suggest narrower scope or file grouping |
 | Parse failure | Read raw text, do own severity assessment, report with raw output |
@@ -346,22 +350,24 @@ When Claude Code and Codex disagree on an issue:
 
 ## Codex -> Claude Code Mirror
 
+**Note:** Mirror commands use `claude` CLI which is not in this skill's allowed-tools. The mirror section is reference documentation for when Codex orchestrates Claude Code — it is not executed by this skill directly.
+
 If Codex is orchestrating review loops but you want Claude Code to run the review pass, use this mirror.
 
 ### Preflight
 
 ```bash
-rm -f /tmp/claude-version-$PPID.log
-claude --version > /tmp/claude-version-$PPID.log 2>&1; EC=$?; echo "Exit code: $EC"
+rm -f /tmp/claude-version-$INVOC_ID.log
+claude --version > /tmp/claude-version-$INVOC_ID.log 2>&1; EC=$?; echo "Exit code: $EC"
 ```
 
 ### Round Invocation (review only, JSON)
 
 ```bash
-rm -f /tmp/claude-review-r{N}-$PPID.json /tmp/claude-review-r{N}-$PPID.err
+rm -f /tmp/claude-review-r{N}-$INVOC_ID.json /tmp/claude-review-r{N}-$INVOC_ID.err
 claude -p --permission-mode plan --output-format json --max-turns 1 \
   "Review the current diff and return STRICT JSON with: summary, issues, verdict, dry_check, shared_candidates." \
-  > /tmp/claude-review-r{N}-$PPID.json 2>/tmp/claude-review-r{N}-$PPID.err; EC=$?; echo "Exit code: $EC"
+  > /tmp/claude-review-r{N}-$INVOC_ID.json 2>/tmp/claude-review-r{N}-$INVOC_ID.err; EC=$?; echo "Exit code: $EC"
 ```
 
 ### Notes

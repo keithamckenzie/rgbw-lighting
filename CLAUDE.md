@@ -161,7 +161,7 @@ Example: `ESP_LOGI(TAG, "Rate: %" PRIu32 " Hz", sampleRate);`
 **Run build commands once, capture output, check exit code:**
 
 ```bash
-pio run -e esp32 2>&1 > /tmp/pio.log; EC=$?; echo "Exit code: $EC"; head -80 /tmp/pio.log; echo "..."; tail -80 /tmp/pio.log
+pio run -e esp32 > /tmp/pio.log 2>&1; EC=$?; echo "Exit code: $EC"; head -80 /tmp/pio.log; echo "..."; tail -80 /tmp/pio.log
 ```
 
 **Decision tree:**
@@ -174,7 +174,7 @@ pio run -e esp32 2>&1 > /tmp/pio.log; EC=$?; echo "Exit code: $EC"; head -80 /tm
 The same pattern applies to tests:
 
 ```bash
-pio test -e native 2>&1 > /tmp/test.log; EC=$?; echo "Exit code: $EC"; head -80 /tmp/test.log; echo "..."; tail -80 /tmp/test.log
+pio test -e native > /tmp/test.log 2>&1; EC=$?; echo "Exit code: $EC"; head -80 /tmp/test.log; echo "..."; tail -80 /tmp/test.log
 ```
 
 **Do NOT** run `pio run` again after it already passed with exit code 0 just to "double check." Exit 0 means it passed.
@@ -221,7 +221,7 @@ All commands run from `apps/<app-name>/` directory.
 **Pre-commit build check pattern:**
 
 ```bash
-pio run -e esp32 2>&1 > /tmp/pio.log; EC=$?; echo "Exit code: $EC"; head -80 /tmp/pio.log; echo "..."; tail -80 /tmp/pio.log
+pio run -e esp32 > /tmp/pio.log 2>&1; EC=$?; echo "Exit code: $EC"; head -80 /tmp/pio.log; echo "..."; tail -80 /tmp/pio.log
 ```
 
 - Exit code 0 = Passed. Move on. Do NOT run additional commands.
@@ -375,7 +375,19 @@ Connectivity        (ESP32 only, no internal lib dependencies)
 
 ## Review Skills
 
-Multi-model code review and validation skills in `.claude/skills/`. All skills are self-contained with correct project paths, embedded domain context, and PlatformIO verification commands — no manual overrides needed.
+Multi-model code review and validation skills in `.claude/skills/`. All skills reference shared execution protocols and antipattern files for consistency. Embedded domain context and PlatformIO verification commands are baked in.
+
+### Shared Protocol Files
+
+| File | Purpose |
+|------|---------|
+| `shared/codex-execution-protocol.md` | Codex lifecycle steps (1-14), canonical prompt fragments (FRAG-*), overlay table |
+| `shared/gemini-execution-protocol.md` | Gemini lifecycle steps (1-10), canonical prompt fragments (GFRAG-*), overlay table |
+| `shared/codex-antipatterns.md` | 13 general + 10 embedded-specific Codex failure modes |
+| `shared/gemini-antipatterns.md` | 10 general + 5 embedded-specific Gemini failure modes |
+| `shared/claude-triage-antipatterns.md` | 8 Claude Code triage self-check patterns (T1-T8) |
+| `shared/reviewer-prompt-neutrality.md` | Canonical contract for neutral re-review prompts |
+| `shared/gemini-finding-schema.md` | Standardized finding object schema with embedded-specific confidence calibration |
 
 ### Skill Reference
 
@@ -393,6 +405,10 @@ Multi-model code review and validation skills in `.claude/skills/`. All skills a
 | `/gemini-review` | Advisory last-10% review for edge cases and risks | After change sets >5 files or >200 LOC |
 | `/gemini-ui` | UI/UX review: layout, accessibility, design-system (Tauri dashboard) | After dashboard (tools/dashboard) UI changes |
 | `/gemini-vision` | Convert screenshots/mockups into implementation guidance | When user provides an image for UI work |
+| `/review-findings` | Structured triage state machine for review findings | After codex-review/gemini-review produces findings |
+| `/commit` | Guided commit with gate enforcement and AI attribution check | When user says "commit" or "ready to commit" |
+| `/pre-build-fix-loop` | Iterative PlatformIO build-fix loop across platforms | When user says "fix build" or wants automated iteration |
+| `/snapshot` | Session handoff snapshot (branch, files, findings, gates) | When user says "snapshot" or "handoff" |
 
 ### Workflow Integration
 
@@ -402,13 +418,25 @@ Multi-model code review and validation skills in `.claude/skills/`. All skills a
 **After implementation:**
 - Run `/codex-review` after bug fix phases for correctness validation
 - Run `/codex-review --scope branch` before requesting user commit approval on multi-file changes
+- Run `/review-findings` to triage any findings through the structured state machine
 
 **For large change sets (>5 files or >200 LOC):**
 - Run `/gemini-review` after `/codex-review` completes — Gemini catches the last 10% of edge cases
+- Run `/review-findings` to process findings from both reviewers with consistent dispositions
+
+**For multi-platform builds:**
+- Run `/pre-build-fix-loop` to iterate through build errors across esp32/esp8266/avr
+- Run `/pre-build-fix-loop --all --with-tests` for comprehensive verification
 
 **For dashboard UI work (tools/dashboard):**
 - Run `/gemini-ui` after accessibility, CSS, or design system changes
 - Run `/gemini-vision` when the user provides a screenshot or mockup to implement
+
+**For committing:**
+- Run `/commit` to enforce the full commit protocol (gates, attribution check, user confirmation)
+
+**For session handoff:**
+- Run `/snapshot` to capture current state for resumption in another session
 
 ### Embedded-Specific Review Focus
 
